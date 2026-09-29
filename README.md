@@ -1,4 +1,4 @@
-# Pre-market screen
+# Claude Premarket Screener
 
 A daily pre-market dashboard for U.S. stocks. It scans the S&P 500, S&P 400,
 Nasdaq-100 and `watchlist.txt` for unusual moves before the open and writes an
