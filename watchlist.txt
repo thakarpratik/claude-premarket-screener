@@ -1,0 +1,7 @@
+# Extra tickers to scan beyond the S&P 500 / S&P 400 / Nasdaq-100 (one per line).
+# Small caps, ADRs and names you follow go here.
+QURE
+SMMT
+ZIM
+DHT
+NTES
