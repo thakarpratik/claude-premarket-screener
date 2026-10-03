@@ -63,20 +63,22 @@ a{color:inherit}
 </main></body></html>`;
 }
 
-function cleanEnv(value: string | undefined): string | undefined {
+function readEnv(name: string): string | undefined {
+  const value = process.env[name];
   if (!value) return undefined;
   const trimmed = value.trim().replace(/^["']|["']$/g, "");
   return trimmed || undefined;
 }
 
 function blobToken(): string | undefined {
-  const named =
-    cleanEnv(process.env.BLOB_READ_WRITE_TOKEN) ||
-    cleanEnv(process.env.BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN);
-  if (named) return named;
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.endsWith("READ_WRITE_TOKEN")) continue;
-    const token = cleanEnv(value);
+  const names = Object.keys(process.env).filter((key) => key.endsWith("READ_WRITE_TOKEN"));
+  const ordered = [
+    "BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN",
+    "BLOB_READ_WRITE_TOKEN",
+    ...names,
+  ];
+  for (const name of ordered) {
+    const token = readEnv(name);
     if (token?.startsWith("vercel_blob_rw_")) return token;
   }
   return undefined;
