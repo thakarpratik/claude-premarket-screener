@@ -63,8 +63,26 @@ a{color:inherit}
 </main></body></html>`;
 }
 
-async function localDashboard(): Promise<string | null> {
-  if (process.env.VERCEL) return null;
+function cleanEnv(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim().replace(/^["']|["']$/g, "");
+  return trimmed || undefined;
+}
+
+function blobToken(): string | undefined {
+  const named =
+    cleanEnv(process.env.BLOB_READ_WRITE_TOKEN) ||
+    cleanEnv(process.env.BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN);
+  if (named) return named;
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.endsWith("READ_WRITE_TOKEN")) continue;
+    const token = cleanEnv(value);
+    if (token?.startsWith("vercel_blob_rw_")) return token;
+  }
+  return undefined;
+}
+
+async function readReportFile(): Promise<string | null> {
   const file = path.join(process.cwd(), "reports", "latest.html");
   try {
     return await readFile(file, "utf8");
@@ -73,29 +91,26 @@ async function localDashboard(): Promise<string | null> {
   }
 }
 
-function blobToken(): string | undefined {
-  return (
-    process.env.BLOB_READ_WRITE_TOKEN ||
-    process.env.BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN ||
-    undefined
-  );
+async function readPrivateStore(): Promise<string | null> {
+  const token = blobToken();
+  const result = await get("latest.html", {
+    access: "private",
+    useCache: false,
+    ...(token ? { token } : {}),
+  });
+  if (!result || result.statusCode !== 200 || !result.stream) return null;
+  const html = await new Response(result.stream).text();
+  return html.includes("<html") ? html : null;
 }
 
 export async function loadDashboard(): Promise<string> {
-  const local = await localDashboard();
-  if (local) return decorate(local);
   try {
-    const token = blobToken();
-    const result = await get("latest.html", {
-      access: "private",
-      useCache: false,
-      ...(token ? { token } : {}),
-    });
-    if (!result || result.statusCode !== 200 || !result.stream) {
-      return waitingPage("The latest screen has not been published yet. It appears here after the weekday run on your PC finishes.");
-    }
-    return decorate(await new Response(result.stream).text());
+    const remote = await readPrivateStore();
+    if (remote) return decorate(remote);
   } catch {
-    return waitingPage("The private store is not connected yet. Add the Blob token on Vercel, then run the screener once on your PC.");
+    // The store token is optional. The saved report below still renders.
   }
+  const saved = await readReportFile();
+  if (saved) return decorate(saved);
+  return waitingPage("The latest screen has not been published yet. It appears here after the weekday run on your PC finishes.");
 }
