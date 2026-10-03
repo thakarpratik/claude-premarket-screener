@@ -73,11 +73,24 @@ async function localDashboard(): Promise<string | null> {
   }
 }
 
+function blobToken(): string | undefined {
+  return (
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    process.env.BLOB_READ_WRITE_TOKEN_READ_WRITE_TOKEN ||
+    undefined
+  );
+}
+
 export async function loadDashboard(): Promise<string> {
   const local = await localDashboard();
   if (local) return decorate(local);
   try {
-    const result = await get("latest.html", { access: "private", useCache: false });
+    const token = blobToken();
+    const result = await get("latest.html", {
+      access: "private",
+      useCache: false,
+      ...(token ? { token } : {}),
+    });
     if (!result || result.statusCode !== 200 || !result.stream) {
       return waitingPage("The latest screen has not been published yet. It appears here after the weekday run on your PC finishes.");
     }
