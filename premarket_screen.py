@@ -26,7 +26,7 @@ import xml.etree.ElementTree as XML
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -34,6 +34,7 @@ import requests
 import yfinance as yf
 
 import learning
+import publish
 
 ET = ZoneInfo("America/New_York")
 HERE = Path(__file__).resolve().parent
@@ -402,10 +403,11 @@ GENERIC_NEWS = re.compile(r"stocks? (moving|making|to watch)|biggest mov|movers|
 
 
 def long_score(r, e: dict, sector_moves: dict, market_chg: float | None,
-               weights: dict) -> tuple[int, list[str], list[str], dict]:
+               weights: dict, news_known: bool = True) -> tuple[int, list[str], list[str], dict]:
     """0-100 score for a gap-up long setup: weighted sum of features (weights are learned daily).
 
-    Returns (score, positives, negatives, features)."""
+    Returns (score, positives, negatives, features). news_known is false on a
+    historical replay, where the morning's headlines are no longer available."""
     f = {k: 0.0 for k in weights}
     pos, neg = [], []
     specific = [n for n in e["news"] if not GENERIC_NEWS.search(n["title"])]
@@ -416,7 +418,7 @@ def long_score(r, e: dict, sector_moves: dict, market_chg: float | None,
     elif specific:
         f["older_news"] = 1
         pos.append("Company-specific headline, but older than 18h")
-    else:
+    elif news_known:
         neg.append("No identifiable company-specific catalyst. The move may be sympathy or noise.")
     if e["earnings"]:
         f["earnings"] = 1
@@ -493,7 +495,7 @@ def long_score(r, e: dict, sector_moves: dict, market_chg: float | None,
     if flt and flt < LOW_FLOAT:
         f["low_float"] = 1
         neg.append(f"Low float ({fbig(flt)} shares): easy to squeeze or pump, high reversal risk")
-    if g > 5 and not specific:
+    if news_known and g > 5 and not specific:
         f["pump_pattern"] = 1
         neg.append(f"{g:.0f}× normal range with no company news: classic pump pattern")
     if r["ret20"] is not None and r["ret20"] > 100:
@@ -504,14 +506,50 @@ def long_score(r, e: dict, sector_moves: dict, market_chg: float | None,
 
 def levels(r) -> tuple[float, float]:
     """(trigger, invalidation) for a long setup."""
-    trigger = r["pm_hi"] or r["price"]
-    stop = min(r["pm_lo"] or r["prev_close"], r["price"] * 0.99)
-    return float(trigger), float(stop)
+    def num(x):
+        if x is None or (isinstance(x, float) and math.isnan(x)):
+            return None
+        return float(x)
+    price = num(r["price"])
+    trigger = num(r["pm_hi"]) or price
+    stop = min(num(r["pm_lo"]) or num(r["prev_close"]), price * 0.99)
+    return trigger, stop
 
 
-def picks_html(picks: list) -> str:
+DEFAULT_BROKER = {
+    "label": "Open chart",
+    "url": "https://www.tradingview.com/chart/?symbol={ticker}",
+}
+
+
+def broker_config() -> dict:
+    """Link opened from a setup card. Override with broker.json."""
+    path = HERE / "broker.json"
+    if not path.exists():
+        return dict(DEFAULT_BROKER)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"  broker.json ignored: {e}")
+        return dict(DEFAULT_BROKER)
+    url = str(data.get("url") or "")
+    label = str(data.get("label") or DEFAULT_BROKER["label"]).strip()[:40]
+    if url.startswith("https://") and "{ticker}" in url and label:
+        return {"label": label, "url": url}
+    print("  broker.json ignored: url must start with https:// and include {ticker}")
+    return dict(DEFAULT_BROKER)
+
+
+def broker_button(ticker: str, broker: dict) -> str:
+    url = broker["url"].replace("{ticker}", quote(ticker, safe=""))
+    return (f"<div class=act><a href='{esc(url)}' target=_blank rel=noopener>"
+            f"{esc(broker['label'])}</a></div>")
+
+
+def picks_html(picks: list, broker: dict | None = None) -> str:
     if not picks:
         return "<div class=card><p>No liquid stock is gapping up ≥1% with enough evidence to score yet.</p></div>"
+    broker = broker or DEFAULT_BROKER
     out = []
     for rank, (score, r, e, pos, neg, _) in enumerate(picks, 1):
         name = e["info"].get("shortName") or r["name"]
@@ -519,19 +557,34 @@ def picks_html(picks: list) -> str:
         trigger, stop = levels(r)
         risk_pct = (trigger - stop) / trigger * 100
         grade = "Strong" if score >= 70 else "Moderate" if score >= 50 else "Weak"
-        out.append(f"""<div class=card>
-  <div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px'>
-    <h3>#{rank} {esc(name)} <span class=sub>{r['ticker']}</span></h3>
-    <span class=big>{score}<span class=sub>/100 · {grade}</span></span></div>
-  <div class=meta><span class=pill>Mkt cap {cap_html(mcap)}</span>{fnum(r['price'], dollar=True)} · <span class=up>{fnum(r['gap_pct'], 1, pct=True, sign=True)}</span>
-    vs prev close {fnum(r['prev_close'], dollar=True)}</div>
-  <div class=kv><span>Long trigger</span><span>Holds above <b>{fnum(trigger, dollar=True)}</b> (pre-market high) after the open, with volume</span>
-    <span>Invalidation</span><span>Below <b>{fnum(stop, dollar=True)}</b> (pre-market low). Setup is broken.</span>
-    <span>Risk to invalidation</span><span>{fnum(risk_pct, 1, pct=True)} from trigger</span></div>
-  <div class=section-label>Evidence for</div><ul>{''.join(f'<li>{esc(x)}</li>' for x in pos)}</ul>
-  <div class=section-label>Evidence against</div><ul>{''.join(f'<li>{esc(x)}</li>' for x in neg) or '<li>None flagged</li>'}</ul>
-</div>""")
-    return "<div class=cards>" + "".join(out) + "</div>"
+        gcls = "strong" if score >= 70 else "mid" if score >= 50 else "weak"
+        more_for, more_against = pos[3:], neg[2:]
+        extra = ""
+        if more_for or more_against:
+            extra = ("<details><summary>Rest of the evidence</summary><div class=reasons>"
+                     f"<ul>{''.join(f'<li>{esc(x)}</li>' for x in more_for)}</ul>"
+                     f"<ul>{''.join(f'<li>{esc(x)}</li>' for x in more_against)}</ul></div></details>")
+        out.append(f"""<article class=dcard>
+  <header>
+    <span class=rank>{rank}</span>
+    <div class=who><div class=sym>{r['ticker']}</div><div class=name>{esc(name)}</div></div>
+    <div class='move up'>{fnum(r['gap_pct'], 1, pct=True, sign=True)}</div>
+  </header>
+  <div class=decide>
+    <div><span>Score</span><b class='grade {gcls}'>{score} {grade}</b></div>
+    <div><span>Trigger</span><b>{fnum(trigger, dollar=True)}</b></div>
+    <div><span>Invalid below</span><b>{fnum(stop, dollar=True)}</b></div>
+    <div><span>Risk</span><b>{fnum(risk_pct, 1, pct=True)}</b></div>
+  </div>
+  <div class=meta>{fnum(r['price'], dollar=True)} · cap {cap_html(mcap)} · prev {fnum(r['prev_close'], dollar=True)}</div>
+  <div class=reasons>
+    <div><div class=section-label>For</div><ul>{''.join(f'<li>{esc(x)}</li>' for x in pos[:3]) or '<li>None flagged</li>'}</ul></div>
+    <div><div class=section-label>Against</div><ul>{''.join(f'<li>{esc(x)}</li>' for x in neg[:2]) or '<li>None flagged</li>'}</ul></div>
+  </div>
+  {extra}
+  {broker_button(r['ticker'], broker)}
+</article>""")
+    return "<div class=deck>" + "".join(out) + "</div>"
 
 
 def fetch_market_caps() -> dict[str, dict]:
@@ -639,51 +692,154 @@ def scenarios(r) -> list[str]:
 # ---------------------------------------------------------------- HTML
 
 CSS = """
-:root{--bg:#f7f7f5;--card:#fff;--ink:#1b1c1e;--mute:#6b6f76;--line:#e3e3df;--up:#0f7b45;--down:#c0392b;
---accent:#2f5bd3;--warn:#9a6700;--chip:#eef0f3}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#111214;--card:#1a1b1e;--ink:#e8e8e6;
---mute:#9aa0a6;--line:#2b2d31;--up:#3ecf8e;--down:#ff6b5e;--accent:#7aa2ff;--warn:#e3b341;--chip:#24262a}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
-font:14px/1.45 -apple-system,Segoe UI,Inter,Roboto,sans-serif}
-.wrap{max-width:1280px;margin:0 auto;padding:20px 16px 60px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 10px;text-transform:uppercase;
-letter-spacing:.06em;color:var(--mute)}h3{margin:0;font-size:17px}
-.meta{color:var(--mute);font-size:13px}.pill{display:inline-block;padding:2px 8px;border-radius:99px;
-background:var(--chip);font-size:12px;margin-right:6px}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+:root{
+  --bg:oklch(0.972 0.008 85);--card:oklch(0.994 0.004 85);--ink:oklch(0.28 0.02 65);
+  --mute:oklch(0.48 0.02 70);--line:oklch(0.90 0.012 85);--chip:oklch(0.945 0.012 85);
+  --up:oklch(0.46 0.11 155);--down:oklch(0.50 0.13 28);--accent:oklch(0.44 0.07 55);
+  --warn:oklch(0.52 0.11 75);--up-bg:oklch(0.95 0.03 155);--down-bg:oklch(0.95 0.03 28);
+  --bar:3.6rem
+}
+:root[data-theme=dark]{
+  --bg:oklch(0.21 0.012 70);--card:oklch(0.25 0.012 70);--ink:oklch(0.94 0.01 85);
+  --mute:oklch(0.74 0.015 80);--line:oklch(0.34 0.012 70);--chip:oklch(0.29 0.012 70);
+  --up:oklch(0.78 0.11 155);--down:oklch(0.76 0.11 28);--accent:oklch(0.78 0.06 70);
+  --warn:oklch(0.82 0.09 80);--up-bg:oklch(0.32 0.04 155);--down-bg:oklch(0.32 0.04 28)
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --bg:oklch(0.21 0.012 70);--card:oklch(0.25 0.012 70);--ink:oklch(0.94 0.01 85);
+    --mute:oklch(0.74 0.015 80);--line:oklch(0.34 0.012 70);--chip:oklch(0.29 0.012 70);
+    --up:oklch(0.78 0.11 155);--down:oklch(0.76 0.11 28);--accent:oklch(0.78 0.06 70);
+    --warn:oklch(0.82 0.09 80);--up-bg:oklch(0.32 0.04 155);--down-bg:oklch(0.32 0.04 28)
+  }
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:4.6rem}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:14px/1.45 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 72px}
+.topbar{position:sticky;top:0;z-index:4;background:var(--bg);border-bottom:1px solid var(--line);
+margin:0 -20px;padding:10px 20px 0}
+.toprow{display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+h1{font-size:1.35rem;line-height:1.15;margin:0;font-weight:680;letter-spacing:-0.02em}
+.kicker{margin:0 0 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+.status{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end;color:var(--mute);font-size:12px}
+.jump{display:flex;gap:6px;overflow-x:auto;padding:8px 0 10px}
+.jump a{flex:0 0 auto;color:var(--ink);background:var(--chip);border-radius:99px;padding:4px 10px;font-size:12px}
+.jump a:hover{background:var(--line)}
+.theme{font:inherit;font-size:12px;color:var(--ink);background:var(--card);border:1px solid var(--line);
+border-radius:99px;padding:4px 10px;cursor:pointer}
+.theme:hover,a.theme:hover{background:var(--chip);text-decoration:none}
+a.theme{text-decoration:none}
+h2{font-size:1.05rem;margin:36px 0 8px;font-weight:680;letter-spacing:-0.01em}
+h3{margin:0;font-size:15px;font-weight:650}
+.lede,.meta{color:var(--mute);font-size:13px;max-width:68ch}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;background:var(--chip);font-size:12px;margin-right:6px}
+.pill.up{background:var(--up-bg);color:var(--up)}
+.pill.down{background:var(--down-bg);color:var(--down)}
+.banner{background:oklch(0.95 0.04 80);color:var(--warn);border-radius:10px;padding:10px 12px;margin-top:14px}
+:root[data-theme=dark] .banner{background:oklch(0.32 0.04 80)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .banner{background:oklch(0.32 0.04 80)}}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.setup{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.setup-top{display:grid;grid-template-columns:1.6rem minmax(0,1fr) auto auto;gap:8px 14px;align-items:center}
+.rank{color:var(--mute);font-variant-numeric:tabular-nums;font-size:13px}
+.sym{font-weight:700;letter-spacing:.02em}
+.name{color:var(--mute);font-size:12px}
+.move{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+.score{min-width:6.5rem;text-align:right}
+.score strong{font-size:1.15rem;font-variant-numeric:tabular-nums}
+.score span{display:block;color:var(--mute);font-size:11px}
+.track{display:block;height:4px;border-radius:99px;background:var(--line);margin-top:6px;overflow:hidden;width:6.5rem}
+.score .track{margin-left:auto}
+td .track{margin-left:0}
+.track>i{display:block;height:100%;background:var(--accent);border-radius:inherit}
+.levels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 4px}
+.levels div{background:var(--chip);border-radius:8px;padding:8px 10px}
+.levels dt{font-size:11px;color:var(--mute)}
+.levels dd{margin:2px 0 0;font-weight:650;font-variant-numeric:tabular-nums}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin-top:8px}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
-th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
-th{font-size:12px;color:var(--mute);font-weight:600}th:first-child,td:first-child{text-align:left}
-td.l,th.l{text-align:left;white-space:normal}.up{color:var(--up)}.down{color:var(--down)}
-.stale{color:var(--warn)}.scroll{overflow-x:auto}
-.cards{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(420px,1fr))}
-@media (max-width:520px){.cards{grid-template-columns:1fr}}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px;margin:8px 0}
-.kv span:nth-child(odd){color:var(--mute)}ul{margin:6px 0;padding-left:18px}li{margin:2px 0}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-size:11px;color:var(--mute);font-weight:650;letter-spacing:.03em;text-transform:uppercase}
+th:first-child,td:first-child{text-align:left}
+td.l,th.l{text-align:left;white-space:normal}
+tbody tr:hover td{background:var(--chip)}
+.scroll{overflow-x:auto}
+.scroll thead th{position:sticky;top:0;background:var(--card)}
+.deck{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.dcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 14px 12px;display:flex;flex-direction:column;gap:10px}
+.dcard header{display:flex;align-items:flex-start;gap:10px}
+.dcard header .who{min-width:0;flex:1}
+.decide{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.decide div{background:var(--chip);border-radius:8px;padding:7px 8px}
+.decide span{display:block;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--mute)}
+.decide b{display:block;margin-top:2px;font-variant-numeric:tabular-nums;font-size:13px}
+.act{display:flex}
+.act a{display:block;flex:1;text-align:center;background:var(--ink);color:var(--bg);border-radius:8px;
+padding:9px 10px;font-size:13px;font-weight:650}
+.act a:hover{text-decoration:none}
+.grade.weak{color:var(--warn)}.grade.mid{color:var(--ink)}.grade.strong{color:var(--up)}
+.reasons{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.reasons ul{margin:0}
+.mosaic{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(148px,1fr))}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.tile .sym{font-size:14px}
+.tile .move{font-size:1.05rem;text-align:left;margin-top:4px}
+.groupname{font-size:12px;font-weight:650;color:var(--mute);margin:14px 0 8px}
+.kv{display:grid;grid-template-columns:9.5rem 1fr;gap:3px 12px;font-size:13px;margin:8px 0}
+.kv span:nth-child(odd){color:var(--mute)}
+ul{margin:6px 0;padding-left:18px}li{margin:3px 0}
+.heads{list-style:none;margin:0;padding:0}
+.heads li{display:grid;grid-template-columns:7.2rem minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.heads time{color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-.big{font-size:22px;font-weight:650}.warn{color:var(--warn)}.sub{font-size:12px;color:var(--mute)}
-.section-label{font-size:12px;font-weight:600;color:var(--mute);margin-top:10px;text-transform:uppercase;letter-spacing:.04em}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.big{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums}
+.up{color:var(--up)}.down{color:var(--down)}.stale{color:var(--warn)}.warn{color:var(--warn)}
+.sub{font-size:12px;color:var(--mute)}
+.section-label{font-size:11px;font-weight:650;color:var(--mute);margin:12px 0 4px;letter-spacing:.05em;text-transform:uppercase}
+.links{margin-top:8px}
+details{margin-top:8px}
+summary{cursor:pointer;color:var(--mute);font-size:13px}
+details p,details li{max-width:72ch}
+@media (max-width:720px){
+  .wrap{padding:0 12px 56px}
+  .topbar{margin:0 -12px;padding:10px 12px 0}
+  .toprow{flex-direction:column;align-items:flex-start}
+  .status{justify-content:flex-start}
+  .setup-top{grid-template-columns:1.4rem minmax(0,1fr) auto}
+  .setup-top>.move{grid-column:3;grid-row:1}
+  .setup-top>.score{grid-column:2 / -1;grid-row:2;text-align:left}
+  .score .track{margin-left:0}
+  .deck,.decide,.reasons,.levels,.split,.heads li{grid-template-columns:1fr}
+  .decide{grid-template-columns:1fr 1fr}
+  .kv{grid-template-columns:1fr}
+}
 """
 
 
 def macro_html(macro: dict, today: date) -> str:
     parts = []
     for grp, rows in macro.items():
-        trs = []
+        tiles = []
         for r in rows:
             if r["last"] is None:
-                trs.append(f"<tr><td>{esc(r['label'])}</td><td colspan=3 class=stale>Unavailable</td></tr>")
+                tiles.append(f"<div class=tile><div class=name>{esc(r['label'])}</div><div class='sub stale'>Unavailable</div></div>")
                 continue
             last = fnum(r["last"], 3 if r.get("yield") else 2) + ("%" if r.get("yield") else "")
             chg = fnum(r["chg"], 0 if r["unit"] == "bp" else 2, sign=True) + (" bp" if r["unit"] == "bp" else "%")
             stale = "" if r["asof"] == today.strftime("%b %d") else " stale"
             roll = " <span class=stale title='Likely contract roll; verify'>roll?</span>" if r.get("roll") else ""
-            trs.append(f"<tr><td>{esc(r['label'])}</td><td>{last}</td><td class='{cls(r['chg'])}'>{chg}{roll}</td>"
-                       f"<td class='sub{stale}'>{esc(r['asof'])}</td></tr>")
-        parts.append(f"<div class=card><div class=section-label>{esc(grp)}</div><table>"
-                     f"<tr><th>Instrument</th><th>Last</th><th>Chg</th><th>Bar</th></tr>{''.join(trs)}</table></div>")
-    return "<div class=grid>" + "".join(parts) + "</div>"
+            tone = cls(r["chg"])
+            tiles.append(
+                f"<div class=tile><div class=name>{esc(r['label'])}</div>"
+                f"<div class=sym>{last}</div>"
+                f"<div class='move {tone}'>{chg}{roll}</div>"
+                f"<div class='sub{stale}'>{esc(r['asof'])}</div></div>")
+        parts.append(f"<div class=groupname>{esc(grp)}</div><div class=mosaic>{''.join(tiles)}</div>")
+    return "".join(parts)
 
 
 def sectors_html(sec: pd.DataFrame) -> str:
@@ -691,27 +847,30 @@ def sectors_html(sec: pd.DataFrame) -> str:
         return "<p class=warn>Sector ETF data unavailable.</p>"
     names = dict((s, n) for n, s in SECTOR_ETFS)
     sec = sec.sort_values("gap_pct", ascending=False)
-    trs = "".join(f"<tr><td>{esc(names.get(r.ticker, r.ticker))} <span class=sub>{r.ticker}</span></td>"
-                  f"<td class='{cls(r.gap_pct)}'>{fnum(r.gap_pct, 2, pct=True, sign=True)}</td>"
-                  f"<td>{fnum(r.gap_atr, 1, sign=True)}×</td></tr>" for r in sec.itertuples())
-    return (f"<div class='card scroll'><table><tr><th>Sector / factor ETF</th><th>vs prior close</th>"
-            f"<th>in ATRs</th></tr>{trs}</table></div>")
+    tiles = []
+    for r in sec.itertuples():
+        tone = cls(r.gap_pct)
+        tiles.append(
+            f"<div class=tile><div class=name>{esc(names.get(r.ticker, r.ticker))}</div>"
+            f"<div class=sym>{r.ticker}</div>"
+            f"<div class='move {tone}'>{fnum(r.gap_pct, 2, pct=True, sign=True)}</div>"
+            f"<div class=sub>{fnum(r.gap_atr, 1, sign=True)}× ATR</div></div>")
+    return f"<div class=mosaic>{''.join(tiles)}</div>"
 
 
 def movers_table(df: pd.DataFrame) -> str:
-    trs = []
+    tiles = []
     for r in df.itertuples():
-        trs.append(
-            f"<tr><td><b>{r.ticker}</b></td><td>{cap_html(None if pd.isna(r.mcap) else r.mcap)}</td>"
-            f"<td>{fnum(r.price, dollar=True)}</td>"
-            f"<td class='{cls(r.gap_pct)}'>{fnum(r.gap_pct, 2, pct=True, sign=True)}</td>"
-            f"<td>{fnum(r.gap_atr, 1, sign=True)}×</td><td>{fnum(r.atr_pct, 1, pct=True)}</td>"
-            f"<td>{fbig(r.pm_vol)}</td><td>{fnum(r.pm_vol_pct_adv, 1, pct=True)}</td>"
-            f"<td>{fbig(r.dollar_vol)}</td><td>{fnum(r.rsi, 0)}</td>"
-            f"<td>{fnum(r.pm_hi)}</td><td>{fnum(r.pm_lo)}</td><td>{fnum(r.prev_close)}</td></tr>")
-    return ("<div class='card scroll'><table><tr><th>Ticker</th><th>Mkt cap</th><th>Price</th><th>Move</th><th>Move/ATR</th>"
-            "<th>ATR%</th><th>PM vol</th><th>PM vol % ADV</th><th>$ ADV</th><th>RSI</th>"
-            "<th>PM high</th><th>PM low</th><th>Prev close</th></tr>" + "".join(trs) + "</table></div>")
+        tone = cls(r.gap_pct)
+        mcap = None if pd.isna(r.mcap) else r.mcap
+        tiles.append(f"""<article class=tile>
+  <div class=sym>{r.ticker}</div>
+  <div class='move {tone}'>{fnum(r.gap_pct, 1, pct=True, sign=True)}</div>
+  <div class=sub>{fnum(r.gap_atr, 1, sign=True)}× ATR · {fnum(r.price, dollar=True)}</div>
+  <div class=sub>Cap {cap_html(mcap)} · RSI {fnum(r.rsi, 0)}</div>
+  <div class=sub>PM {fnum(r.pm_lo)}–{fnum(r.pm_hi)} · prev {fnum(r.prev_close, dollar=True)}</div>
+</article>""")
+    return f"<div class=mosaic>{''.join(tiles)}</div>"
 
 
 def card_html(r, e: dict, today: date) -> str:
@@ -745,29 +904,39 @@ def card_html(r, e: dict, today: date) -> str:
     kv = "".join(f"<span>{k}</span><span>{v}</span>" for k, v in fund)
     tech = "".join(f"<li>{esc(n)}</li>" for n in setup_notes(r))
     scen = "".join(f"<li>{esc(s)}</li>" for s in scenarios(r))
-    return f"""<div class=card>
-  <div style='display:flex;justify-content:space-between;align-items:baseline;gap:8px'>
-    <h3>{esc(name)} <span class=sub>{r['ticker']}</span></h3>
-    <span class='big {cls(r['gap_pct'])}'>{fnum(r['gap_pct'], 1, pct=True, sign=True)}</span></div>
-  <div class=meta><span class=pill>{direction}</span>{earn}<span class=pill>{fnum(r['gap_atr'], 1, sign=True)}× ATR</span>
-    <span class=pill>Mkt cap {cap_html(mcap)}</span>
-    {fnum(r['price'], dollar=True)} · prev close {fnum(r['prev_close'], dollar=True)}
-    · {f"PM vol {fbig(r['pm_vol'])} ({fnum(r['pm_vol_pct_adv'], 1, pct=True)} of avg day)" if r['pm_vol']
-       else "PM volume unavailable from Yahoo"} · avg day {fbig(r['adv'])} sh</div>
-  <div class=section-label>Fresh headlines (possible catalyst)</div>{news}
-  <div class=section-label>Analyst actions</div>{grades}
-  <div class=section-label>Technical context</div><ul>{tech}</ul>
-  <div class=section-label>Conditional scenarios</div><ul>{scen}</ul>
-  <div class=section-label>Fundamentals & positioning</div><div class=kv>{kv}</div>
-  <div class=section-label>Your checklist</div>
-  <ul class=sub><li>What NEW information arrived, and when? Did it land before or after the move?</li>
-  <li>Why does it change cash flows, valuation or positioning? How much is already priced in?</li>
-  <li>What would invalidate the move? Look for contradicting evidence.</li></ul>
-  <div class=sub>Links: <a target=_blank href='https://finance.yahoo.com/quote/{r['ticker']}'>Yahoo</a> ·
-    <a target=_blank href='https://finviz.com/quote.ashx?t={r['ticker']}'>Finviz</a> ·
-    <a target=_blank href='https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={r['ticker']}&type=&dateb=&owner=include&count=40'>SEC filings</a> ·
-    <a target=_blank href='https://www.barchart.com/stocks/quotes/{r['ticker']}/options'>Options</a></div>
-</div>"""
+    tone = "up" if r["gap_pct"] > 0 else "down"
+    first = e["news"][:1]
+    lead = (f"<a href='{esc(first[0]['url'])}' target=_blank>{esc(first[0]['title'])}</a>"
+            f"<div class=sub>{esc(first[0]['provider'])} · {first[0]['ts']:%b %d %H:%M} ET</div>") if first else \
+        f"<p class=warn>No headline in the last {NEWS_MAX_AGE_H}h. Catalyst unverified.</p>"
+    return f"""<article class=dcard>
+  <header>
+    <div class=who><div class=sym>{r['ticker']}</div><div class=name>{esc(name)}</div></div>
+    <div class='move {tone}'>{fnum(r['gap_pct'], 1, pct=True, sign=True)}</div>
+  </header>
+  <div class=decide>
+    <div><span>Price</span><b>{fnum(r['price'], dollar=True)}</b></div>
+    <div><span>vs range</span><b>{fnum(r['gap_atr'], 1, sign=True)}×</b></div>
+    <div><span>PM high</span><b>{fnum(r['pm_hi'], dollar=True)}</b></div>
+    <div><span>PM low</span><b>{fnum(r['pm_lo'], dollar=True)}</b></div>
+  </div>
+  <div class=meta><span class='pill {tone}'>{direction}</span>{earn}<span class=pill>Cap {cap_html(mcap)}</span></div>
+  <div>{lead}</div>
+  <details>
+    <summary>Context, scenarios, fundamentals</summary>
+    <div class=section-label>Headlines</div>{news}
+    <div class=section-label>Analyst actions</div>{grades}
+    <div class=section-label>Technical context</div><ul>{tech}</ul>
+    <div class=section-label>Conditional scenarios</div><ul>{scen}</ul>
+    <div class=section-label>Fundamentals</div><div class=kv>{kv}</div>
+    <div class='sub links'>
+      <a target=_blank href='https://finance.yahoo.com/quote/{r['ticker']}'>Yahoo</a> ·
+      <a target=_blank href='https://finviz.com/quote.ashx?t={r['ticker']}'>Finviz</a> ·
+      <a target=_blank href='https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={r['ticker']}&type=&dateb=&owner=include&count=40'>SEC</a> ·
+      <a target=_blank href='https://www.barchart.com/stocks/quotes/{r['ticker']}/options'>Options</a>
+    </div>
+  </details>
+</article>"""
 
 
 def calendars_html(earn_rows, econ_rows, universe: set) -> str:
@@ -778,12 +947,13 @@ def calendars_html(earn_rows, econ_rows, universe: set) -> str:
     big = sorted(earn_rows, key=lambda r: parse_mcap(r.get("marketCap")), reverse=True)
     big = [r for r in big if parse_mcap(r.get("marketCap")) >= 2e9 or r.get("symbol") in universe][:30]
     if big:
-        trs = "".join(f"<tr><td><b>{esc(r.get('symbol'))}</b></td><td class=l>{esc(r.get('name'))}</td>"
-                      f"<td>{et_time(r)}</td><td>{esc(r.get('epsForecast') or '—')}</td>"
-                      f"<td>{esc(r.get('marketCap') or '—')}</td></tr>" for r in big)
-        earn = (f"<div class='card scroll'><div class=section-label>Earnings today (market cap ≥ $2B)</div><table>"
-                f"<tr><th>Ticker</th><th class=l>Company</th><th>When</th><th>EPS est.</th><th>Mkt cap</th></tr>"
-                f"{trs}</table></div>")
+        tiles = "".join(
+            f"<div class=tile><div class=sym>{esc(r.get('symbol'))}</div>"
+            f"<div class=name>{esc(r.get('name'))}</div>"
+            f"<div class=sub>{et_time(r)} · EPS {esc(r.get('epsForecast') or '—')}</div>"
+            f"<div class=sub>{esc(r.get('marketCap') or '—')}</div></div>" for r in big)
+        earn = (f"<div class=groupname>Earnings today, market cap at least $2B</div>"
+                f"<div class=mosaic>{tiles}</div>")
     else:
         earn = ("<div class=card><div class=section-label>Earnings today</div><p class=warn>Unavailable. "
                 "See <a target=_blank href='https://www.nasdaq.com/market-activity/earnings'>Nasdaq earnings</a>."
@@ -818,50 +988,79 @@ def calendars_html(earn_rows, econ_rows, universe: set) -> str:
 
 def build_page(ctx: dict, refresh_min: int | None) -> str:
     refresh = f"<meta http-equiv=refresh content='{refresh_min * 60}'>" if refresh_min else ""
+    fresh = (f"Refreshes every {refresh_min} min" if refresh_min else "Static snapshot")
     return f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content='width=device-width,initial-scale=1'>{refresh}
-<title>Pre-market Screen</title><style>{CSS}</style></head><body><div class=wrap>
-<h1>Pre-market catalyst screen</h1>
-<div class=meta><span class=pill>{esc(ctx['state'])}</span>Built {ctx['built']:%A %b %d, %Y · %H:%M:%S} ET ·
- {ctx['n_scanned']} liquid stocks scanned (price ≥ ${MIN_PRICE:.0f}, avg $ volume ≥ {fbig(MIN_DOLLAR_VOL)}) ·
- {'auto-refresh every ' + str(refresh_min) + ' min' if refresh_min else 'static snapshot'}</div>
+<title>CLaude Premarket Screener · {ctx['built']:%b %d}</title><style>{CSS}</style></head><body><div class=wrap>
+<header class=topbar>
+  <div class=toprow>
+    <div><p class=kicker>Research screen</p><h1>CLaude Premarket Screener</h1></div>
+    <div class=status>
+      <span class=pill>{esc(ctx['state'])}</span>
+      <span>{ctx['built']:%a %b %d · %H:%M} ET</span>
+      <span>{ctx['n_scanned']} names</span>
+      <span>{fresh}</span>
+      <button type=button class=theme id=theme>Theme</button>
+    </div>
+  </div>
+  <nav class=jump>
+    <a href=#picks>Setups</a><a href=#tape>Tape</a><a href=#sectors>Sectors</a>
+    <a href=#headlines>Headlines</a><a href=#movers>Movers</a><a href=#evidence>Evidence</a>
+    <a href=#calendar>Calendar</a><a href=#record>Record</a>
+  </nav>
+</header>
 {ctx['warning']}
-<h2>Learning: how previous setups actually did</h2>
-<p class=sub>Each setup is replayed on 5-minute bars: entry when price trades above the trigger, exit at invalidation or
-the close. Result is in R (1R = the distance from entry to invalidation). The weights take a small, capped step
-toward whatever worked, and a larger step when a call was completely wrong.</p>
-{ctx['learning']}
-<h2>Today's top long setups</h2>
-<p class=sub>Mechanical score (0–100) across catalyst freshness, earnings and upgrades, size of move, trend, RSI, whether the
-gap is holding, sector and market confirmation, liquidity, and pump-and-dump guards (market cap, float,
-parabolic runs, big moves with no news). Stocks under ${fbig(MIN_PICK_MCAP)} market cap are never picked. It ranks evidence, not certainty. Most gaps fade, so the
-trigger (holding above the pre-market high after the open) matters more than the score. Not personalized investment advice.</p>
+<h2 id=picks>Today's long setups</h2>
+<p class=lede>Ranked by evidence, not certainty. A setup is the trigger: price holds above the pre-market high after the open, with volume. Names under ${fbig(MIN_PICK_MCAP)} market cap are excluded. Not investment advice.</p>
 {ctx['picks']}
-<h2>Market dashboard</h2>{ctx['macro']}
-<h2>Sector & factor tape</h2>{ctx['sectors']}
-<h2>Pre-market headlines (all caps, including small caps outside the scan)</h2>
-<p class=sub>Google News, last 20h. Use this to catch movers the index-based scan misses (biotech readouts, deals, small caps).</p>
+<h2 id=tape>Market tape</h2>{ctx['macro']}
+<h2 id=sectors>Sector and factor tape</h2>{ctx['sectors']}
+<h2 id=headlines>Headlines outside the index scan</h2>
+<p class=lede>Google News, last 20 hours. This is where small-cap readouts and deals show up.</p>
 {ctx['headlines']}
-<h2>Unusual movers: top {TOP_TABLE} by move relative to typical daily range (ATR)</h2>
-<p class=sub>A move of 2× ATR means the stock has moved twice its normal full-day range before the open.
-Pre-market volume from Yahoo is partial and delayed. Treat it as a relative signal, not an exact count.</p>
+<h2 id=movers>Unusual movers</h2>
+<p class=lede>Top {TOP_TABLE} by how far the move is versus a normal day (ATR). 2× ATR means twice a typical full-day range. Yahoo pre-market volume is partial.</p>
 {ctx['table']}
-<h2>Top {TOP_CARDS}: evidence cards</h2>
-<p class=sub>Ordered by how unusual the move is, not by attractiveness. "Gap up" and "gap down" describe price action, not a
-recommendation. Headlines are candidate catalysts. Confirm them against primary sources.</p>
-<div class=cards>{ctx['cards']}</div>
-<h2>What could change the picture today</h2>{ctx['calendars']}
-<h2>Data limitations</h2><div class=card><ul class=sub>
-<li>Source: Yahoo Finance via yfinance (unofficial; quotes can be delayed up to 15 min; bars can be missing).</li>
-<li>Not available: live options flow, implied volatility, gamma levels, borrow cost, order flow, VWAP before the open.</li>
-<li>Short interest is Yahoo's bi-monthly figure and lags by 2+ weeks.</li>
-<li>News is Yahoo's aggregated feed from the last {NEWS_MAX_AGE_H}h. A missing headline means unverified, not "no catalyst".</li>
-<li>Rows marked in amber in the dashboard have a last bar from a prior day (that market has not traded yet today).</li>
-<li>Universe: S&amp;P 500 + S&amp;P 400 + Nasdaq-100 + watchlist.txt. Small caps and ADRs outside those lists are
-not scanned. Use the headlines section, or add tickers to watchlist.txt.</li>
-<li>Yahoo frequently reports pre-market volume as 0, so the PM-volume columns may be blank.</li>
-<li>Research screen only, not investment advice.</li></ul></div>
-</div></body></html>"""
+<h2 id=evidence>Evidence on the largest moves</h2>
+<p class=lede>Ordered by how unusual the move is, not by how attractive it looks. Headlines are candidate catalysts.</p>
+<details><summary>Questions to ask of each name</summary>
+<ul><li>What new information arrived, and did it land before or after the move?</li>
+<li>Why would it change cash flows, valuation, or positioning, and how much is already in the price?</li>
+<li>What would invalidate the move?</li></ul></details>
+<div class=deck>{ctx['cards']}</div>
+<h2 id=calendar>What could change the picture</h2>{ctx['calendars']}
+<h2 id=record>How previous setups did</h2>
+<details><summary>How a setup is graded</summary>
+<p>Each setup is replayed on 5-minute bars. Entry is when price trades above the trigger. Exit is invalidation or the close. Result is in R, where 1R is the distance from entry to invalidation. Weights take a small step toward what worked, and a larger step when a call was completely wrong.</p>
+</details>
+{ctx['learning']}
+<details><summary>Data limitations</summary><ul>
+<li>Source: Yahoo Finance via yfinance. Quotes can be delayed up to 15 minutes, and bars can be missing.</li>
+<li>Not in this screen: live options flow, implied volatility, gamma, borrow cost, order flow, or VWAP before the open.</li>
+<li>Short interest is Yahoo's bi-monthly figure and lags by 2 or more weeks.</li>
+<li>News is Yahoo's feed from the last {NEWS_MAX_AGE_H} hours. A missing headline means unverified, not "no catalyst".</li>
+<li>Amber figures have a last bar from a prior day.</li>
+<li>Universe: S&amp;P 500, S&amp;P 400, Nasdaq-100, and watchlist.txt. Add tickers to watchlist.txt to include them.</li>
+<li>Yahoo often reports pre-market volume as 0, so those columns may be blank.</li>
+</ul></details>
+</div>
+<script>
+const root=document.documentElement, btn=document.getElementById('theme');
+const saved=localStorage.getItem('pm-theme');
+if(saved) root.dataset.theme=saved;
+function label(){{
+  const dark=root.dataset.theme==='dark'||(!root.dataset.theme&&matchMedia('(prefers-color-scheme: dark)').matches);
+  btn.textContent=dark?'Light':'Dark';
+}}
+label();
+btn.addEventListener('click',()=>{{
+  const dark=root.dataset.theme==='dark'||(!root.dataset.theme&&matchMedia('(prefers-color-scheme: dark)').matches);
+  root.dataset.theme=dark?'light':'dark';
+  localStorage.setItem('pm-theme', root.dataset.theme);
+  label();
+}});
+</script>
+</body></html>"""
 
 
 # ---------------------------------------------------------------- main
@@ -878,8 +1077,8 @@ def build(tickers: list[str], daily: pd.DataFrame, refresh_min: int | None, lear
 
     warning = ""
     if m.empty:
-        warning = ("<p class=warn><b>No trades yet today in the data feed.</b> Possibly a market holiday, "
-                   "too early (before 4:00 ET) or a data outage.</p>")
+        warning = ("<p class=banner><b>No trades yet today in the data feed.</b> Possibly a market holiday, "
+                   "too early (before 4:00 ET), or a data outage.</p>")
         m = pd.DataFrame(columns=["ticker", "gap_pct", "gap_atr", "dollar_vol", "price"])
     caps = fetch_market_caps()
     # Scale the prior-close cap by today's move so it reflects the current price.
@@ -925,7 +1124,8 @@ def build(tickers: list[str], daily: pd.DataFrame, refresh_min: int | None, lear
     big_enough = [not pd.isna(x[1]["mcap"]) and x[1]["mcap"] >= MIN_PICK_MCAP for x in scored]
     eligible = [x for x, ok in zip(scored, big_enough) if ok]
     excluded = [x for x, ok in zip(scored, big_enough) if not ok]
-    picks = picks_html(eligible[:5])
+    broker = broker_config()
+    picks = picks_html(eligible[:5], broker)
     if excluded:
         picks += ("<p class=sub>Excluded as pump-and-dump risk (market cap under "
                   f"${fbig(MIN_PICK_MCAP)} or unknown): " + ", ".join(
@@ -935,10 +1135,10 @@ def build(tickers: list[str], daily: pd.DataFrame, refresh_min: int | None, lear
         cards = ["<div class=card><p>No liquid stock is moving ≥1% vs its prior close yet.</p></div>"]
 
     heads = market_headlines()
-    heads_html = ("<div class=card><ul>" + "".join(
-        f"<li><a href='{esc(n['url'])}' target=_blank>{esc(n['title'])}</a> "
-        f"<span class=sub>· {esc(n['provider'])} · {n['ts']:%b %d %H:%M} ET</span></li>" for n in heads)
-        + "</ul></div>") if heads else "<p class=warn>Market headlines unavailable.</p>"
+    heads_html = ("<div class=card><ul class=heads>" + "".join(
+        f"<li><time>{n['ts']:%b %d %H:%M}</time><div><a href='{esc(n['url'])}' target=_blank>{esc(n['title'])}</a> "
+        f"<div class=sub>{esc(n['provider'])}</div></div></li>" for n in heads)
+        + "</ul></div>") if heads else "<p class=banner>Market headlines unavailable.</p>"
 
     print(f"[{now_et():%H:%M:%S}] calendars...")
     cal = calendars_html(nasdaq_calendar("earnings", today), nasdaq_calendar("economicevents", today),
@@ -957,6 +1157,10 @@ def build(tickers: list[str], daily: pd.DataFrame, refresh_min: int | None, lear
     latest = REPORTS / "latest.html"
     latest.write_text(page, encoding="utf-8")
     print(f"[{now_et():%H:%M:%S}] wrote {dated}")
+    try:
+        publish.upload_dashboard(page)
+    except Exception as e:
+        print(f"  private app upload failed: {e}")
     return latest
 
 

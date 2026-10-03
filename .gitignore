@@ -1,11 +1,7 @@
-# Generated output
-reports/
-universe_cache.json
-
-# Learning state (changes daily; back up separately if you want to keep it)
-journal/
-
-# Python
 __pycache__/
-*.pyc
-.venv/
+private.env
+broker.json
+web/node_modules/
+web/.next/
+web/.env.local
+web/.vercel/

@@ -42,6 +42,28 @@ Output goes to `reports/run.log`.
 `run_premarket.bat` has a hard-coded path to `python.exe`. Edit it if Python lives
 somewhere else.
 
+## Private app (phone)
+
+`web/` is a Vercel app with one password. After each screener run, `publish.py`
+uploads `latest.html` to a private Blob store. The phone never sees that file
+directly. Add the site to your home screen and it opens full screen.
+
+The setup card button opens TradingView for that ticker. To point it at a
+broker, copy `broker.example.json` to `broker.json` and set `url` to an
+`https://` address that contains `{ticker}`.
+
+Deploy once:
+
+1. In Vercel, import this folder with the root directory set to `web`.
+2. Create a Blob store and set its access to Private. Connect it to the project.
+3. On the project, set `SITE_PASSWORD` and `AUTH_SECRET` (at least 16 characters).
+   The Blob connection supplies `BLOB_READ_WRITE_TOKEN`.
+4. Copy that token into `private.env` on this PC (`private.env.example` shows the line).
+5. Deploy, open the site, and use Add to Home Screen.
+
+The scan still runs on this PC. If the PC is asleep, the phone shows the last
+upload. A wrong password stays on the login page. Log out is on the dashboard.
+
 ## Data sources
 
 Yahoo Finance (via yfinance), Nasdaq public APIs (market caps, calendars, Nasdaq-100),
