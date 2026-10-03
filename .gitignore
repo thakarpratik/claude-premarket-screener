@@ -1,7 +1,7 @@
 __pycache__/
 private.env
 broker.json
-web/node_modules/
-web/.next/
-web/.env.local
-web/.vercel/
+node_modules/
+.next/
+.env.local
+.vercel/

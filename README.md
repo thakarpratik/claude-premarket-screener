@@ -44,9 +44,10 @@ somewhere else.
 
 ## Private app (phone)
 
-`web/` is a Vercel app with one password. After each screener run, `publish.py`
-uploads `latest.html` to a private Blob store. The phone never sees that file
-directly. Add the site to your home screen and it opens full screen.
+The Next.js app at the repository root is the private site. After each screener
+run, `publish.py` uploads `latest.html` to a private Blob store. The phone
+never sees that file directly. Add the site to your home screen and it opens
+full screen.
 
 The setup card button opens TradingView for that ticker. To point it at a
 broker, copy `broker.example.json` to `broker.json` and set `url` to an
@@ -54,7 +55,8 @@ broker, copy `broker.example.json` to `broker.json` and set `url` to an
 
 Deploy once:
 
-1. In Vercel, import this folder with the root directory set to `web`.
+1. In Vercel, import this repository. Leave the root directory as the repository
+   root, and set the framework to Next.js if it still says Python.
 2. Create a Blob store and set its access to Private. Connect it to the project.
 3. On the project, set `SITE_PASSWORD` and `AUTH_SECRET` (at least 16 characters).
    The Blob connection supplies `BLOB_READ_WRITE_TOKEN`.

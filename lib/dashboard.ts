@@ -65,7 +65,7 @@ a{color:inherit}
 
 async function localDashboard(): Promise<string | null> {
   if (process.env.VERCEL) return null;
-  const file = path.join(process.cwd(), "..", "reports", "latest.html");
+  const file = path.join(process.cwd(), "reports", "latest.html");
   try {
     return await readFile(file, "utf8");
   } catch {
