@@ -1,4 +1,6 @@
 yfinance>=1.0
-pandas>=2.0
-requests
-lxml
+pandas
+numpy
+fastapi
+uvicorn
+tzdata

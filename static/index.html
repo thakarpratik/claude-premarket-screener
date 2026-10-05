@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="logo">◎</div>
+    <div>
+      <h1>Move Radar</h1>
+      <p class="sub">Which US stocks are likely to make a big move next session — and what the data says about them</p>
+    </div>
+  </div>
+  <div class="status">
+    <span id="session" class="pill">—</span>
+    <span id="updated" class="muted">—</span>
+    <button id="refreshBtn" class="btn">Refresh now</button>
+  </div>
+</header>
+
+<div id="progress" class="progress hidden"><span class="spinner"></span><span id="progressText"></span></div>
+<div id="modelBar" class="model-bar"></div>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="screener">Screener</button>
+  <button class="tab" data-tab="perf">Track record &amp; learning</button>
+</nav>
+
+<main id="screener" class="view">
+  <section id="topHead" class="top5">
+    <div>
+      <h2>Today's top 5</h2>
+      <div class="criteria">
+        <span class="crit">✓ Company worth $2B+</span>
+        <span class="crit">✓ Price $10+</span>
+        <span class="crit">✓ Low pump-and-dump risk</span>
+        <span class="crit">✓ No data problems</span>
+        <span class="crit">✓ At least as many positive signals as negative</span>
+        <span class="crit">Ranked by chance of a big move</span>
+      </div>
+      <div id="topCount" class="muted small"></div>
+    </div>
+    <button id="modeBtn" class="btn ghost">See all stocks</button>
+  </section>
+  <section id="allControls" class="controls hidden">
+    <input id="search" type="search" placeholder="Search symbol or company…">
+    <div class="chips" id="filters">
+      <button class="chip active" data-f="all">All</button>
+      <button class="chip" data-f="movers">Today's movers</button>
+      <button class="chip" data-f="earnings">Earnings soon</button>
+      <button class="chip" data-f="watch">Watchlist ★</button>
+    </div>
+    <label class="sel">Sort
+      <select id="sort">
+        <option value="p_big">Big-move chance</option>
+        <option value="abs_change">Today's move size</option>
+        <option value="rel_volume">Unusual volume</option>
+        <option value="signals">Positive signals</option>
+      </select>
+    </label>
+    <label class="sel">Min chance <input id="minP" type="range" min="0" max="80" value="0" step="5"><span id="minPv">0%</span></label>
+    <label class="sel toggle" title="Hide stocks showing several pump-and-dump warning signs"><input id="hidePump" type="checkbox" checked> Hide pump-and-dump risks <span id="pumpCount" class="tag l"></span></label>
+    <form id="addForm" class="add"><input id="addSym" placeholder="Add ticker (e.g. AAPL)" maxlength="10"><button class="btn ghost">+ Watch</button></form>
+  </section>
+  <div id="count" class="muted small"></div>
+  <section id="grid" class="grid"></section>
+</main>
+
+<main id="perf" class="view hidden"></main>
+
+<aside id="drawer" class="drawer hidden" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <div class="drawer-panel">
+    <button class="close" data-close aria-label="Close">✕</button>
+    <div id="drawerBody"></div>
+  </div>
+</aside>
+
+<footer class="foot">
+  Data: Yahoo Finance (prices, volume, earnings dates, analyst data, options, headlines). Probabilities are measured statistics, not guarantees.
+  Direction is shown only with its tested accuracy. This is a research tool, not financial advice.
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

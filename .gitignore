@@ -1,7 +1,10 @@
-__pycache__/
+# Local engine state and secrets
+/data/
 private.env
-broker.json
+__pycache__/
+# Next.js
 node_modules/
 .next/
 .env.local
 .vercel/
+*.tsbuildinfo

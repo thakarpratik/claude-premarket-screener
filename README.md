@@ -1,73 +1,73 @@
-# Claude Premarket Screener
+# Move Radar — US stock big-move screener
 
-A daily pre-market dashboard for U.S. stocks. It scans the S&P 500, S&P 400,
-Nasdaq-100 and `watchlist.txt` for unusual moves before the open and writes an
-HTML page to `reports/latest.html`. A learning loop grades each day's setups
-against real prices and adjusts the scoring weights.
+Shows US stocks as cards ranked by their **measured chance of a ≥3% move next session**. Each card also covers what happened today and why, the factors behind the odds, and a fact-based buy-side checklist. Every prediction is logged, graded after the next close, and fed back into a daily retrain.
 
-Research screen only, not investment advice.
+## Run
 
-## Setup
+Double-click `run.bat` (or run `python -m radar.server`). The app opens at http://127.0.0.1:8765.
+The first scan takes about a minute: it downloads two years of data and trains the model. While the app is running, it refreshes every 15 minutes during market hours and hourly at other times.
 
-```
-pip install -r requirements.txt
-python premarket_screen.py              # build once and open in the browser
-python premarket_screen.py --watch 5    # rebuild every 5 min until 09:35 ET
-python premarket_screen.py --no-open    # build without opening a browser
-```
+## What each card shows
 
-## What's on the page
+| Section | Source |
+|---|---|
+| Price, prev close, change, gap, range, volume | Yahoo daily bars (live during the session) |
+| Big-move chance + "× average odds" | Logistic model trained on ~50k stock-days |
+| Direction lean | Separate model, shown only with its tested accuracy ("no proven edge" when it doesn't beat the baseline) |
+| Why it moved | Stock vs. sector ETF vs. S&P 500, volume, earnings, recent headlines that name the company |
+| Drivers | The 3 factors raising this stock's odds most today |
+| Signals bar | Checklist: trend (50/200-day), relative strength, analysts, target, valuation, growth, short interest, volume, earnings risk |
 
-1. **Learning:** how yesterday's setups did, calibration by score band, and weight changes.
-2. **Top long setups:** 0–100 scores with trigger, invalidation and evidence for and against.
-   Stocks under $2B market cap are never picked.
-3. **Market dashboard:** futures, VIX, yields, dollar, commodities, crypto and global indices.
-4. **Sector and factor ETFs**, pre-market headlines, the unusual-movers table, evidence cards and calendars.
+Click a card to open the detail view: chart, options-implied move, full checklist, every factor's push on the odds, news, and this stock's own prediction record.
 
-## Learning loop (`learning.py`)
+## Pump-and-dump protection
 
-- Each run journals every scored setup to `journal/picks.jsonl`.
-- The next run replays each setup on that day's 5-minute bars. Entry is at the trigger,
-  exit is at the invalidation level or the close, and the result is recorded in R.
-- Weights take a capped step (max 3 points per day) toward what worked. Predictions that
-  were completely wrong get twice the correction.
-- Delete `journal/weights.json` to reset to the starting weights.
+Every stock is checked against the SEC's published pump-and-dump warning signs:
 
-## Scheduling (Windows)
+- a tiny company or penny-stock price
+- a sudden price spike on exploding volume
+- the whole float trading in one day, or a very small float
+- losses or little revenue
+- no analyst coverage and few institutional owners
+- a reverse split in the last year
+- a big move with no company news
+- an earlier spike-and-crash pattern
 
-`run_premarket.bat` is run by the Task Scheduler task `PremarketScreen`: weekdays at
-8:30 AM, waking the PC and running on battery, and catching up if a run was missed.
-Output goes to `reports/run.log`.
+Each flag shows the measured value, and together they produce a 0–100 risk score. Companies over $10B are too big to pump, so they're capped at low risk.
+High-risk stocks are **hidden by default** (use the "Hide pump-and-dump risks" toggle), except ones on your watchlist, which stay visible with the warning.
+The detail view also shows what actually happened after past spikes in the app's own price history. That sample grows every day, because Yahoo's small-cap gainers are downloaded and studied.
 
-`run_premarket.bat` has a hard-coded path to `python.exe`. Edit it if Python lives
-somewhere else.
+## How it learns
 
-## Private app (phone)
+1. Every refresh logs a prediction per stock (`data/screener.db`).
+2. After the next session closes, each prediction is graded with the real move.
+3. Once a day the model retrains on the newest data and:
+   - re-picks how much weight recent days get (tested on the last 20 days, held out of training);
+   - gives calls that were completely wrong (off by more than 60 points) 3× weight.
+4. The **Track record & learning** tab shows the live hit rate, calibration, misses, weights and the retraining log.
 
-The Next.js app at the repository root is the private site. After each screener
-run, `publish.py` uploads `latest.html` to a private Blob store. The phone
-never sees that file directly. Add the site to your home screen and it opens
-full screen.
+If the app isn't run for a few days, it catches up on the next run, because grading and training use the full price history.
 
-The setup card button opens TradingView for that ticker. To point it at a
-broker, copy `broker.example.json` to `broker.json` and set `url` to an
-`https://` address that contains `{ticker}`.
+## View it from anywhere (private online site)
 
-Deploy once:
+The engine runs on this PC. After every refresh it uploads one JSON bundle (screen, track record, and detail views for the
+top stocks + watchlist) to a **private** Vercel Blob store. The Next.js site in this repo (`app/`, `lib/`, `middleware.ts`)
+serves the same page in read-only mode, behind a password.
 
-1. In Vercel, import this repository. Leave the root directory as the repository
-   root, and set the framework to Next.js if it still says Python.
-2. Create a Blob store and set its access to Private. Connect it to the project.
-3. On the project, set `SITE_PASSWORD` and `AUTH_SECRET` (at least 16 characters).
-   The Blob connection supplies `BLOB_READ_WRITE_TOKEN`.
-4. Copy that token into `private.env` on this PC (`private.env.example` shows the line).
-5. Deploy, open the site, and use Add to Home Screen.
+- `radar/` – Python engine (data, model, learning, pump screen, publishing)
+- `static/` – the page (used both locally and online)
+- `app/`, `lib/`, `middleware.ts` – the online site (login + data route)
 
-The scan still runs on this PC. If the PC is asleep, the phone shows the last
-upload. A wrong password stays on the login page. Log out is on the dashboard.
+Setup (one time):
+1. Vercel project connected to this repo, with a private Blob store connected and `SITE_PASSWORD` / `AUTH_SECRET` set.
+2. Put the Blob store's read-write token in `private.env` on this PC (see `private.env.example`). It is never committed.
+3. Pushing to `main` redeploys the site.
 
-## Data sources
+The site shows whatever the PC last uploaded. If the PC is off, it shows the last upload and its time.
 
-Yahoo Finance (via yfinance), Nasdaq public APIs (market caps, calendars, Nasdaq-100),
-Wikipedia (index members), and Yahoo and Google News RSS. Free data can be delayed or
-incomplete, and the page labels what couldn't be verified.
+## Settings
+
+Edit `radar/config.py`: big-move threshold, universe, refresh interval, miss weighting.
+To reset learning, delete the `data/` folder.
+
+Research tool, not financial advice. Probabilities are statistics, not certainties.

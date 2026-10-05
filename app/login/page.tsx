@@ -12,8 +12,8 @@ export default async function LoginPage({
   return (
     <main className="panel">
       <p className="kicker">Private</p>
-      <h1>CLaude Premarket Screener</h1>
-      <p className="lede">This screen is only for you.</p>
+      <h1>Move Radar</h1>
+      <p className="lede">Big-move stock screener. Private to you.</p>
       <form method="post" action="/api/login">
         <label htmlFor="password">Password</label>
         <input

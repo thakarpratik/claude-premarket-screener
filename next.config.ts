@@ -2,8 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // The page, script and styles are read from static/ at request time.
   outputFileTracingIncludes: {
-    "/*": ["./reports/latest.html"],
+    "/": ["./static/**"],
+    "/static/[file]": ["./static/**"],
   },
 };
 

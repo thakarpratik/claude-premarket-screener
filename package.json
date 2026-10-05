@@ -1,5 +1,5 @@
 {
-  "name": "premarket-private",
+  "name": "move-radar",
   "private": true,
   "scripts": {
     "dev": "next dev",
