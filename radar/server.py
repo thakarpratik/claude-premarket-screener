@@ -1,4 +1,6 @@
-"""FastAPI server: JSON API + the static card UI. Run with:  python -m app.server"""
+"""FastAPI server: JSON API + the static card UI. Run with:  python -m radar.server"""
+import socket
+import sys
 import threading
 import time
 import webbrowser
@@ -80,9 +82,30 @@ def scheduler():
         time.sleep(REFRESH_MINUTES * 60 if state in ("open", "pre") else 3600)
 
 
+URL = "http://127.0.0.1:8765"
+
+
+def already_running():
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", 8765)) == 0
+
+
 def main():
+    """python -m radar.server            -> start (or just open the page if it's already running)
+       python -m radar.server --background -> no browser, output to data/server.log (used at logon)"""
+    background = "--background" in sys.argv
+    if already_running():
+        if not background:
+            webbrowser.open(URL)
+        return
+    if background:
+        log = open(ROOT / "data" / "server.log", "a", buffering=1, encoding="utf-8")
+        sys.stdout = sys.stderr = log
+        print(f"===== started {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+    else:
+        threading.Timer(1.5, lambda: webbrowser.open(URL)).start()
     threading.Thread(target=scheduler, daemon=True).start()
-    threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:8765")).start()
     uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
 
 

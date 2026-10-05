@@ -7,6 +7,13 @@ Shows US stocks as cards ranked by their **measured chance of a ≥3% move next 
 Double-click `run.bat` (or run `python -m radar.server`). The app opens at http://127.0.0.1:8765.
 The first scan takes about a minute: it downloads two years of data and trains the model. While the app is running, it refreshes every 15 minutes during market hours and hourly at other times.
 
+### Auto-start at logon
+
+The Windows task **MoveRadar** starts the app hidden whenever you log in (no window, no browser). It refreshes,
+learns and uploads to the online site in the background, and logs to `data/server.log`.
+`run.bat` and http://127.0.0.1:8765 still work: if the app is already running, `run.bat` just opens the page.
+To stop auto-start: Task Scheduler → MoveRadar → Disable. `start_background.bat` starts it hidden by hand.
+
 ## What each card shows
 
 | Section | Source |
