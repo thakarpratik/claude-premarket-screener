@@ -8,7 +8,7 @@ const cls = v => v == null ? "" : v >= 0 ? "up" : "down";
 const daysUntil = iso => iso ? Math.round((new Date(iso) - new Date()) / 864e5) : null;
 const ago = ts => { const m = Math.round((Date.now() / 1000 - ts) / 60); return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
 
-let SNAP = null, FILTER = "all", POLL = null, MODE = "top";
+let SNAP = null, FILTER = "all", POLL = null, MODE = "picks";
 const TOP_N = 5;
 const TOP_MIN_CAP = 2e9, TOP_MIN_PRICE = 10;
 const passes = c => c.pump?.level === "low" && !c.data_warning && c.bull >= c.bear &&
@@ -105,7 +105,14 @@ function dirBlock(c) {
     <div class="dirbar"><i style="width:${up * 100}%"></i></div></div>`;
 }
 
-function card(c, rank) {
+function lockLine(k, c) {
+  const since = c.price != null && k.price ? (c.price / k.price - 1) * 100 : null;
+  return `<div class="lockline"><b>🔒 #${k.rank} locked</b> at ${money(k.price)} · chance then ${pct(k.p_big, 0)}${since != null ? ` · since lock <span class="${cls(since)}">${sgn(since)}%</span>` : ""}</div>`;
+}
+
+const fmtDay = iso => new Date(iso + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+
+function card(c, rank, lock) {
   const w = c.why || {};
   const ref = w.sector_etf ? `${w.sector_etf} ${sgn(w.sector_ret)}%` : `S&P ${sgn(w.mkt_ret)}%`;
   const total = c.bull + c.bear + c.caution || 1;
@@ -119,6 +126,7 @@ function card(c, rank) {
       <div><div class="price">${money(c.price)}</div><div class="prev">prev close ${money(c.prev_close)}${c.partial ? " · live" : ""}</div></div>
       <div class="chg ${cls(c.change_pct)}">${sgn(c.change)} (${sgn(c.change_pct)}%)</div>
     </div>
+    ${lock ? lockLine(lock, c) : ""}
     <div class="meter">${gauge(c.p_big)}
       <div><div class="meter-lbl">Chance of a <b>≥${SNAP.big_move_pct}% move</b> next session</div>
         <div class="meter-lbl"><b>${c.lift.toFixed(1)}×</b> the average stock's odds</div>${dirBlock(c)}</div>
@@ -146,13 +154,40 @@ function pumpBox(c) {
 function renderGrid() {
   if (!SNAP) { $("#grid").innerHTML = `<div class="empty">Loading first scan — downloading two years of data and training the model. This takes about a minute.</div>`; return; }
   const q = $("#search").value.trim().toLowerCase(), minP = +$("#minP").value / 100, sort = $("#sort").value;
-  if (MODE === "top") {
+  $("#count").textContent = "";
+  if (MODE === "picks") {
+    const P = SNAP.picks || {}, items = P.items || [];
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    $("#modeTitle").textContent = P.session ? `Picks for ${fmtDay(P.session)}` : "Locked picks";
+    const note = $("#modeNote");
+    note.className = "mode-note";
+    if (!P.session) {
+      note.textContent = "The first list locks after the next market close (4:10 PM ET). It's built from the completed trading day, then stays fixed for the next session.";
+    } else {
+      const at = new Date(P.locked_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      note.textContent = `Locked ${at} from the completed close. This list stays the same until the next close; only prices update.` +
+        (P.session < today ? " This is the latest list available, because the PC wasn't running at the last close." : "");
+    }
+    $("#topCount").textContent = "";
+    $("#grid").innerHTML = items.length ? items.map(k => {
+      const c = SNAP.cards.find(x => x.symbol === k.symbol);
+      return c ? card(c, k.rank, k) : `<article class="card"><div class="sym">#${k.rank} ${k.symbol}</div>${lockLine(k, {})}<div class="note">No live data for this stock right now.</div></article>`;
+    }).join("") : (P.session ? `<div class="empty">No stock passed every check at the last close, so nothing was locked.</div>` : "");
+    $("#grid").insertAdjacentHTML("beforeend", prevPicks());
+    return;
+  }
+  if (MODE === "live") {
     const ok = SNAP.cards.filter(passes).sort((a, b) => b.p_big - a.p_big);
-    $("#topCount").textContent = `${ok.length} of ${SNAP.cards.length} stocks passed the checks. Showing the ${Math.min(TOP_N, ok.length)} most likely to move.`;
-    $("#count").textContent = "";
+    $("#modeTitle").textContent = "Live view";
+    const note = $("#modeNote");
+    note.className = "mode-note warn";
+    note.textContent = "Re-ranked at every refresh. During market hours it uses a half-finished trading day, so it changes often. Watch it here, but decide from the locked picks.";
+    $("#topCount").textContent = `${ok.length} of ${SNAP.cards.length} stocks pass the checks right now. Showing the ${Math.min(TOP_N, ok.length)} most likely to move.`;
     $("#grid").innerHTML = ok.length ? ok.slice(0, TOP_N).map((c, i) => card(c, i + 1)).join("") : `<div class="empty">No stocks pass all the checks right now.</div>`;
     return;
   }
+  $("#modeTitle").textContent = "All stocks";
+  $("#modeNote").textContent = "";
   const hidePump = $("#hidePump").checked, nHigh = SNAP.cards.filter(c => c.pump?.level === "high").length;
   $("#pumpCount").textContent = nHigh ? `${nHigh} flagged` : "";
   let cards = SNAP.cards.filter(c => !(hidePump && c.pump?.level === "high" && !c.watch) &&
@@ -287,6 +322,30 @@ function pumpSection(c) {
   </div>`;
 }
 
+// Past locked lists and what each stock did in the session it was picked for.
+function picksRecord(limit) {
+  const rows = SNAP?.picks_history || [];
+  const by = {};
+  rows.forEach(r => (by[r.session] ||= []).push(r));
+  const sessions = Object.keys(by).sort().reverse().slice(0, limit);
+  const graded = rows.filter(r => r.big != null), hits = graded.filter(r => r.big).length;
+  return { by, sessions, graded, hits };
+}
+
+function picksTable(rec) {
+  return `<table><tr><th>Session</th><th>Picks → next-session move</th><th>Moved ≥${SNAP.big_move_pct}%</th></tr>
+    ${rec.sessions.map(s => { const g = rec.by[s].filter(r => r.big != null);
+      return `<tr><td>${fmtDay(s)}</td><td style="white-space:normal">${rec.by[s].map(r => `${r.symbol} ${r.actual_ret == null ? `<span class="muted">pending</span>` : `<span class="${cls(r.actual_ret)}">${sgn(r.actual_ret, 1)}%</span>`}`).join(" · ")}</td>
+      <td>${g.length ? `${g.filter(r => r.big).length}/${g.length}` : "—"}</td></tr>`; }).join("")}</table>`;
+}
+
+function prevPicks() {
+  const rec = picksRecord(5);
+  if (rec.sessions.length < 2 && !rec.graded.length) return "";
+  return `<div class="box prevpicks" style="grid-column:1/-1"><h3>Recent locked picks — how they did</h3>${picksTable(rec)}
+    <p class="note" style="margin:8px 0 0">${rec.graded.length ? `${rec.hits} of ${rec.graded.length} graded picks moved ${SNAP.big_move_pct}%+ (either direction).` : "Picks are graded after the session they were picked for closes."} Full record is under Track record &amp; learning.</p></div>`;
+}
+
 // ---------------------------------------------------------------- performance
 function lineChart(rows, keys, colors, fmt) {
   if (rows.length < 2) return `<p class="note">Needs at least two graded days. Check back after the next sessions close.</p>`;
@@ -343,6 +402,10 @@ async function renderPerf() {
       <table><tr><th>Date</th><th>Stock</th><th>Predicted</th><th>Actual move</th></tr>
       ${d.misses.map(x => `<tr><td>${x.date}</td><td>${x.symbol}</td><td>${pct(x.p_big, 0)}</td><td class="${cls(x.actual_ret)}">${sgn(x.actual_ret)}%</td></tr>`).join("")}</table></div>` : ""}
 
+    ${(() => { const rec = picksRecord(30); return rec.sessions.length ? `<div class="box"><h3>Locked picks record</h3>
+      ${rec.graded.length ? `<p class="note" style="margin:0 0 8px">${rec.hits} of ${rec.graded.length} locked picks moved ${SNAP.big_move_pct}%+ in their session (${pct(rec.hits / rec.graded.length, 0)}), vs ${pct(d.actual_rate ?? m.big_stats.base_rate, 0)} for all stocks.</p>` : ""}
+      ${picksTable(rec)}</div>` : ""; })()}
+
     <div class="box"><h3>Retraining log</h3><table><tr><th>Run</th><th>Data through</th><th>Rows</th><th>AUC</th><th>Half-life</th><th>Dir acc</th></tr>
       ${d.runs.map(r => `<tr><td>${r.run_at.slice(0, 16).replace("T", " ")}</td><td>${r.trained_through}</td><td>${r.n_train.toLocaleString()}</td><td>${r.holdout_auc?.toFixed(3)}</td><td>${r.half_life ?? "∞"}</td><td>${pct(r.dir_holdout_acc)}</td></tr>`).join("")}</table></div>`;
 }
@@ -370,13 +433,12 @@ if (REMOTE) {
   b.insertAdjacentHTML("afterend", `<a class="btn ghost" href="/logout">Log out</a>`);
 }
 $("#refreshBtn").onclick = REMOTE ? () => load() : async () => { await api("/api/refresh", { method: "POST" }); load(); };
-$("#modeBtn").onclick = () => {
-  MODE = MODE === "top" ? "all" : "top";
-  $("#allControls").classList.toggle("hidden", MODE === "top");
-  $("#modeBtn").textContent = MODE === "top" ? "See all stocks" : "Back to top 5";
-  $("#topHead h2").textContent = MODE === "top" ? "Today's top 5" : "All stocks";
-  $("#topHead .criteria").classList.toggle("hidden", MODE !== "top");
-  $("#topCount").classList.toggle("hidden", MODE !== "top");
+$("#modes").onclick = e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  MODE = b.dataset.m;
+  document.querySelectorAll("#modes .chip").forEach(x => x.classList.toggle("active", x === b));
+  $("#allControls").classList.toggle("hidden", MODE !== "all");
+  $("#topHead .criteria").classList.toggle("hidden", MODE === "all");
   renderGrid();
 };
 $("#search").oninput = renderGrid;

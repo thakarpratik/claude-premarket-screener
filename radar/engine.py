@@ -562,10 +562,12 @@ def refresh():
                                        "signal": "bear" if c["pump"]["level"] == "high" else "caution"})
                 c["bear" if c["pump"]["level"] == "high" else "caution"] += 1
         spike_stats = pump.spike_aftermath(hist)
+        picks = lock_daily_picks(cards, hist, t)
         snap = clean({"cards": cards, "spike_stats": spike_stats, "generated_at": t.isoformat(timespec="seconds"), "session": session_state(t),
                       "big_move_pct": BIG_MOVE_PCT, "model": {k: model[k] for k in
                       ("id", "trained_through", "run_at", "n_train", "big_stats", "dir_stats", "misses_upweighted")},
-                      "graded_this_run": n_graded})
+                      "graded_this_run": n_graded,
+                      "picks": picks, "picks_history": store.picks_history()})
         _state["snapshot"] = snap
         store.cache_set("snapshot", snap)
         STATUS["last_refresh"] = snap["generated_at"]
@@ -613,6 +615,26 @@ def detail(sym):
     return clean({"card": card, "chart": chart, "history": store.symbol_history(sym, 40),
                   "news": news(sym, (card or {}).get("name")), "implied_move": implied_move(sym),
                   "info": info(sym), "all_drivers": all_drivers})
+
+
+def lock_daily_picks(cards, hist, t):
+    """Freeze the Top 5 once per session so the list to act on doesn't change with every refresh.
+    Picks lock only from a completed close (the same full-day data the model was trained on) and apply to
+    the next session. During market hours the most recent locked list is shown unchanged."""
+    spy = hist["SPY"].index
+    if not _bar_is_partial(spy[-1]):
+        bar_date = spy[-1].date()
+        session = (pd.Timestamp(bar_date) + pd.offsets.BDay(1)).date().isoformat()
+        if not store.picks_for(session):
+            chosen = [c for c in cards if top_pick(c)][:5]  # cards are already sorted by p_big
+            store.lock_picks([{
+                "session": session, "rank": i + 1, "symbol": c["symbol"], "name": c["name"],
+                "bar_date": bar_date.isoformat(), "p_big": c["p_big"], "p_up": c["p_up"], "price": c["price"],
+                "locked_at": t.isoformat(timespec="seconds"), "source": "close"} for i, c in enumerate(chosen)])
+            _step(f"Locked {len(chosen)} picks for the {session} session")
+    session = store.latest_pick_session()
+    items = store.picks_for(session) if session else []
+    return {"session": session, "items": items, "locked_at": items[0]["locked_at"] if items else None}
 
 
 def top_pick(c):

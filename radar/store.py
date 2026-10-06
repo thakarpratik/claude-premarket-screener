@@ -31,6 +31,10 @@ def init():
             dir_holdout_acc REAL, dir_baseline_acc REAL, base_rate REAL, weights TEXT, dir_weights TEXT);
         CREATE TABLE IF NOT EXISTS watchlist (symbol TEXT PRIMARY KEY, added_at TEXT);
         CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, updated REAL);
+        CREATE TABLE IF NOT EXISTS picks (
+            session TEXT, rank INTEGER, symbol TEXT, name TEXT, bar_date TEXT,
+            p_big REAL, p_up REAL, price REAL, locked_at TEXT, source TEXT,
+            PRIMARY KEY (session, symbol));
         """)
 
 
@@ -108,6 +112,34 @@ def latest_features(sym):
     with _lock, _conn() as c:
         r = c.execute("SELECT features FROM predictions WHERE symbol=? ORDER BY date DESC LIMIT 1", (sym,)).fetchone()
     return json.loads(r["features"]) if r and r["features"] else None
+
+
+# ---------- locked daily picks ----------
+def picks_for(session):
+    with _lock, _conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM picks WHERE session=? ORDER BY rank", (session,))]
+
+
+def latest_pick_session():
+    with _lock, _conn() as c:
+        r = c.execute("SELECT MAX(session) AS s FROM picks").fetchone()
+    return r["s"] if r else None
+
+
+def lock_picks(rows):
+    with _lock, _conn() as c:
+        c.executemany("""INSERT OR IGNORE INTO picks VALUES
+            (:session,:rank,:symbol,:name,:bar_date,:p_big,:p_up,:price,:locked_at,:source)""", rows)
+
+
+def picks_history(n_sessions=30):
+    """Locked picks with their graded next-session outcome (from the prediction log)."""
+    with _lock, _conn() as c:
+        return [dict(r) for r in c.execute("""
+            SELECT k.*, p.actual_ret, p.big FROM picks k
+            LEFT JOIN predictions p ON p.date = k.bar_date AND p.symbol = k.symbol
+            WHERE k.session IN (SELECT DISTINCT session FROM picks ORDER BY session DESC LIMIT ?)
+            ORDER BY k.session DESC, k.rank""", (n_sessions,))]
 
 
 # ---------- model runs ----------

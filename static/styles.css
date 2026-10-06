@@ -55,6 +55,11 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
 .criteria { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .crit { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--up-bg); color: var(--up); }
 .crit:last-child { background: var(--accent-bg); color: var(--accent); }
+.mode-note { margin: 0 0 10px; font-size: 13px; color: var(--muted); max-width: 760px; }
+.mode-note.warn { color: var(--warn); }
+.lockline { font-size: 12px; font-family: var(--mono); color: var(--muted); background: var(--accent-bg); border-radius: 8px; padding: 6px 9px; }
+.lockline b { color: var(--accent); font-weight: 600; }
+.prevpicks { margin-top: 18px; }
 .rank { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; margin-right: 6px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 10px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; cursor: pointer; display: flex; flex-direction: column; gap: 12px; transition: border-color .15s, transform .15s; }

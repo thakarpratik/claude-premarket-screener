@@ -35,7 +35,8 @@
 <main id="screener" class="view">
   <section id="topHead" class="top5">
     <div>
-      <h2>Today's top 5</h2>
+      <h2 id="modeTitle">Picks</h2>
+      <p id="modeNote" class="mode-note"></p>
       <div class="criteria">
         <span class="crit">✓ Company worth $2B+</span>
         <span class="crit">✓ Price $10+</span>
@@ -46,7 +47,11 @@
       </div>
       <div id="topCount" class="muted small"></div>
     </div>
-    <button id="modeBtn" class="btn ghost">See all stocks</button>
+    <div class="chips" id="modes">
+      <button class="chip active" data-m="picks">🔒 Locked picks</button>
+      <button class="chip" data-m="live">Live view</button>
+      <button class="chip" data-m="all">All stocks</button>
+    </div>
   </section>
   <section id="allControls" class="controls hidden">
     <input id="search" type="search" placeholder="Search symbol or company…">
