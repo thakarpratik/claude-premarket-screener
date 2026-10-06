@@ -16,6 +16,7 @@ import yfinance as yf
 from . import features as F
 from . import pump
 from . import publish
+from . import plan as tplan
 from . import store
 from .config import (BIG_MOVE_PCT, HIST_CACHE, HISTORY_PERIOD, HOLDOUT_DAYS, MARKET_TICKERS, MISS_THRESHOLD,
                      MISS_WEIGHT, MODEL_PATH, MOVER_MIN_MARKET_CAP, MOVER_MIN_PRICE, MOVERS_PER_LIST, NEWS_TOP_N,
@@ -527,6 +528,7 @@ def refresh():
                     "did not adjust; volatility readings could be inflated.") if jump > 40 else None
             cards.append({
                 "symbol": s, "name": i.get("longName") or i.get("shortName") or s, "sector": i.get("sector"),
+                "industry": i.get("industry"), "analysts": i.get("numberOfAnalystOpinions") or 0, "rv20": r.rv20,
                 "market_cap": i.get("marketCap"), "price": r.close, "prev_close": r.prev_close,
                 "change": r.close - r.prev_close, "change_pct": r.ret1, "gap_pct": r.gap,
                 "day_high": r.high, "day_low": r.low, "volume": r.volume, "rel_volume": math.exp(_f(r.rel_volume, 0)),
@@ -563,6 +565,7 @@ def refresh():
                 c["bear" if c["pump"]["level"] == "high" else "caution"] += 1
         spike_stats = pump.spike_aftermath(hist)
         picks = lock_daily_picks(cards, hist, t)
+        attach_plans(picks, cards, t, hist)
         snap = clean({"cards": cards, "spike_stats": spike_stats, "generated_at": t.isoformat(timespec="seconds"), "session": session_state(t),
                       "big_move_pct": BIG_MOVE_PCT, "model": {k: model[k] for k in
                       ("id", "trained_through", "run_at", "n_train", "big_stats", "dir_stats", "misses_upweighted")},
@@ -612,7 +615,13 @@ def detail(sym):
         x = np.array([_f(feats.get(n)) for n in F.BIG_FEATURES])
         all_drivers = sorted([{"feature": n, "value": feats.get(n), "impact": float(v)}
                               for n, v in zip(F.BIG_FEATURES, big.contributions(x))], key=lambda z: -abs(z["impact"]))
-    return clean({"card": card, "chart": chart, "history": store.symbol_history(sym, 40),
+    plan = next((k.get("plan") for k in (snap.get("picks") or {}).get("items", []) if k["symbol"] == sym), None)
+    if plan is None and card:
+        im = implied_move(sym)
+        t = now_et()
+        plan = tplan.build(dict(card, has_options=im is not None), tplan.opening_ranges([sym], t).get(sym), im, t.date())
+        plan["as_of"] = t.strftime("%H:%M")
+    return clean({"card": card, "chart": chart, "history": store.symbol_history(sym, 40), "plan": plan,
                   "news": news(sym, (card or {}).get("name")), "implied_move": implied_move(sym),
                   "info": info(sym), "all_drivers": all_drivers})
 
@@ -635,6 +644,27 @@ def lock_daily_picks(cards, hist, t):
     session = store.latest_pick_session()
     items = store.picks_for(session) if session else []
     return {"session": session, "items": items, "locked_at": items[0]["locked_at"] if items else None}
+
+
+def attach_plans(picks, cards, t, hist):
+    """Trade plan for each locked pick; earlier picks are the context for 'same bet' flags."""
+    by = {c["symbol"]: c for c in cards}
+    items = picks["items"]
+    rets = pd.DataFrame({k["symbol"]: hist[k["symbol"]].Close.pct_change() for k in items if k["symbol"] in hist})
+    corr = rets.iloc[-61:].corr() if len(rets.columns) > 1 else pd.DataFrame()
+    rngs = tplan.opening_ranges([k["symbol"] for k in items], t)
+    higher = []
+    for k in items:
+        c = by.get(k["symbol"])
+        if not c:
+            continue
+        im = implied_move(k["symbol"])
+        c2 = dict(c, has_options=im is not None)
+        cmap = {o: float(corr.loc[k["symbol"], o]) for o in corr.columns
+                if k["symbol"] in corr.index and o != k["symbol"] and not pd.isna(corr.loc[k["symbol"], o])}
+        k["plan"] = tplan.build(c2, rngs.get(k["symbol"]), im, t.date(), higher, cmap)
+        k["plan"]["as_of"] = t.strftime("%H:%M")
+        higher.append(dict(c2, rank=k["rank"]))
 
 
 def top_pick(c):

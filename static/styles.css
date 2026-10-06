@@ -60,6 +60,19 @@ h1 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
 .lockline { font-size: 12px; font-family: var(--mono); color: var(--muted); background: var(--accent-bg); border-radius: 8px; padding: 6px 9px; }
 .lockline b { color: var(--accent); font-weight: 600; }
 .prevpicks { margin-top: 18px; }
+.risk input { width: 90px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 5px 8px; }
+.risk { margin-top: 6px; }
+.plan { border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.plan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.plan .verdict { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+.plan.v-long .verdict { background: var(--up-bg); color: var(--up); }
+.plan.v-short .verdict { background: var(--down-bg); color: var(--down); }
+.plan.v-skip .verdict, .plan.v-stand_aside .verdict { background: var(--warn-bg); color: var(--warn); }
+.plan.v-wait .verdict { background: var(--accent-bg); color: var(--accent); }
+.plan .lv { font-family: var(--mono); font-size: 12px; }
+.plan .skip { color: var(--warn); }
+.plan .pnote { color: var(--muted); }
+.plan .untested { color: var(--faint); font-size: 11px; }
 .rank { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; margin-right: 6px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 10px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; cursor: pointer; display: flex; flex-direction: column; gap: 12px; transition: border-color .15s, transform .15s; }

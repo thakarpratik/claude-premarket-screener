@@ -112,6 +112,40 @@ function lockLine(k, c) {
 
 const fmtDay = iso => new Date(iso + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 
+// ---------------------------------------------------------------- trade plan (direction-free)
+let RISK = 500;
+try { RISK = +localStorage.getItem("risk") || 500; } catch {}
+const VERDICT = {
+  wait: () => "Wait for the 10:00 ET range", long: p => `Broke up ${p.range.since ? "at " + p.range.since : ""}: long setup`,
+  short: p => `Broke down ${p.range.since ? "at " + p.range.since : ""}: short setup`, stand_aside: () => "Broke both ways: stand aside",
+  skip: () => "Skip",
+};
+
+function planBlock(p, c, full) {
+  if (!p) return "";
+  const r = p.range || {}, lines = [];
+  if (r.state === "set") {
+    lines.push(`<div class="lv">Range 9:30–10:00: ${money(r.low)} – ${money(r.high)} · now ${money(r.last)}</div>`);
+    lines.push(`<div class="lv">Long above ${money(r.high)}, stop ${money(r.low)} · Short below ${money(r.low)}, stop ${money(r.high)}</div>`);
+  } else if (r.state === "forming") {
+    lines.push(`<div class="lv">Range forming: ${money(r.low)} – ${money(r.high)} so far · now ${money(r.last)}</div>`);
+  } else {
+    lines.push(`<div class="pnote">Opens 9:30 ET. Let the first 30 minutes set the range, then trade the side it breaks, with the stop on the other side.</div>`);
+  }
+  const dist = p.stop_dist || p.atr_dollars;
+  if (dist > 0) {
+    const sh = Math.floor(RISK / dist);
+    lines.push(`<div class="lv">Size: $${RISK.toLocaleString()} risk ÷ ${money(dist)} stop${r.state === "set" ? " (range width)" : " (1× normal day)"} = <b>${sh.toLocaleString()} shares</b> (~${money(sh * (c.price || 0))})</div>`);
+  }
+  (p.skip || []).forEach(s => lines.push(`<div class="skip">⚠ ${esc(s)}</div>`));
+  (p.notes || []).forEach(s => lines.push(`<div class="pnote">• ${esc(s)}</div>`));
+  const o = p.options;
+  if (o) lines.push(`<div class="pnote">Options: ±${o.implied_pct.toFixed(1)}% priced by ${o.expiry} vs ~${o.expected_pct.toFixed(1)}% typical → <b>${o.verdict}</b>${full ? ` (${esc(o.label)})` : ""}</div>`);
+  else if (full) lines.push(`<div class="pnote">Options: no options market for this stock.</div>`);
+  return `<div class="plan v-${p.verdict}"><div class="plan-head"><span class="sec-t" style="margin:0">Trade plan</span><span class="verdict">${VERDICT[p.verdict](p)}</span></div>
+    ${lines.join("")}<div class="untested">Rules not yet tested on past data. Paper trade them first.${p.as_of ? ` · as of ${p.as_of} ET` : ""}</div></div>`;
+}
+
 function card(c, rank, lock) {
   const w = c.why || {};
   const ref = w.sector_etf ? `${w.sector_etf} ${sgn(w.sector_ret)}%` : `S&P ${sgn(w.mkt_ret)}%`;
@@ -127,6 +161,7 @@ function card(c, rank, lock) {
       <div class="chg ${cls(c.change_pct)}">${sgn(c.change)} (${sgn(c.change_pct)}%)</div>
     </div>
     ${lock ? lockLine(lock, c) : ""}
+    ${lock ? planBlock(lock.plan, c) : ""}
     <div class="meter">${gauge(c.p_big)}
       <div><div class="meter-lbl">Chance of a <b>≥${SNAP.big_move_pct}% move</b> next session</div>
         <div class="meter-lbl"><b>${c.lift.toFixed(1)}×</b> the average stock's odds</div>${dirBlock(c)}</div>
@@ -277,6 +312,8 @@ async function openDetail(sym) {
       That leaves ${sgn(c.why.excess)}% the market doesn't explain. Volume is ${c.why.rel_volume.toFixed(1)}× normal${c.why.rel_volume >= 2 ? ", so the move has heavy participation" : ""}.</p>
       ${d.news.length ? `<div class="sec-t" style="margin-top:10px">Headlines from the last 4 days (possible catalysts)</div>${d.news.map(n => `<a class="newsitem" href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}<small>${esc(n.publisher)} · ${ago(n.time)}</small></a>`).join("")}` : `<p class="note">No company-specific headlines in the last 4 days.</p>`}
     </div>
+
+    ${d.plan ? `<div class="box" style="padding:0;border:0;background:none">${planBlock(d.plan, c, true)}</div>` : ""}
 
     ${pumpSection(c)}
 
@@ -438,7 +475,14 @@ $("#modes").onclick = e => {
   MODE = b.dataset.m;
   document.querySelectorAll("#modes .chip").forEach(x => x.classList.toggle("active", x === b));
   $("#allControls").classList.toggle("hidden", MODE !== "all");
+  $("#riskBox").classList.toggle("hidden", MODE !== "picks");
   $("#topHead .criteria").classList.toggle("hidden", MODE === "all");
+  renderGrid();
+};
+$("#risk").value = RISK;
+$("#risk").oninput = e => {
+  RISK = Math.max(+e.target.value || 0, 0);
+  try { localStorage.setItem("risk", RISK); } catch {}
   renderGrid();
 };
 $("#search").oninput = renderGrid;
