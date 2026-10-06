@@ -1,6 +1,7 @@
 """Trade plan for a stock: ways to trade a likely big move WITHOUT predicting its direction.
 
-1. Opening range: wait for the 9:30-10:00 ET range, then follow the break with a stop on the other side.
+1. Opening range: the 9:30-10:00 ET range, shown as information. Following its first break was tested
+   (research/orb_study.py) and lost money, so no long/short call is made from it.
 2. Position size: same dollar risk per trade (the page multiplies the user's risk by the stop distance).
 3. Skip flags: same bet as a higher-ranked pick, too little information, evidence split.
 4. Options check: is the move the options market prices bigger or smaller than the stock's recent moves?
@@ -121,10 +122,10 @@ def build(card, rng, implied, today, higher_ranked=(), corr=None):
     if rng.get("state") == "set":
         width = rng["high"] - rng["low"]
         st = rng.get("status")
-        verdict = {"up": "long", "down": "short", "both": "stand_aside", "inside": "wait"}[st]
+        verdict = {"up": "broke_up", "down": "broke_down", "both": "broke_both", "inside": "inside"}[st]
         stop_dist = width
     else:
-        verdict, stop_dist = "wait", atr_d
+        verdict, stop_dist = "no_rule", atr_d
     if skips:
         verdict = "skip"
     return {"verdict": verdict, "range": rng, "atr_dollars": atr_d, "stop_dist": stop_dist,

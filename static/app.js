@@ -116,34 +116,44 @@ const fmtDay = iso => new Date(iso + "T12:00:00").toLocaleDateString([], { weekd
 let RISK = 500;
 try { RISK = +localStorage.getItem("risk") || 500; } catch {}
 const VERDICT = {
-  wait: () => "Wait for the 10:00 ET range", long: p => `Broke up ${p.range.since ? "at " + p.range.since : ""}: long setup`,
-  short: p => `Broke down ${p.range.since ? "at " + p.range.since : ""}: short setup`, stand_aside: () => "Broke both ways: stand aside",
-  skip: () => "Skip",
+  no_rule: () => "No tested entry rule", inside: () => "Inside its range",
+  broke_up: p => `Broke above range${p.range.since ? " at " + p.range.since : ""}`,
+  broke_down: p => `Broke below range${p.range.since ? " at " + p.range.since : ""}`,
+  broke_both: () => "Broke both ways", skip: () => "Skip",
 };
+
+function orbResult() {
+  const o = SNAP?.research?.orb;
+  if (!o || !o.trades) return `<div class="skip">The opening-range breakout rule hasn't been tested yet.</div>`;
+  const r = Math.abs(o.avg_r).toFixed(2), span = `${fmtDay(o.sessions?.[0])} – ${fmtDay(o.sessions?.[1])}`;
+  return `<div class="${o.passes ? "pnote" : "skip"}">${o.passes ? "✓" : "✗"} Tested: trading the first range break ${o.passes ? "made" : "lost"} ${r}R per trade
+    (${o.trades} past picks, ${span}, ${pct(o.win_rate, 0)} winners).${o.passes ? "" : " Not a reason to enter on its own."}</div>`;
+}
 
 function planBlock(p, c, full) {
   if (!p) return "";
   const r = p.range || {}, lines = [];
   if (r.state === "set") {
     lines.push(`<div class="lv">Range 9:30–10:00: ${money(r.low)} – ${money(r.high)} · now ${money(r.last)}</div>`);
-    lines.push(`<div class="lv">Long above ${money(r.high)}, stop ${money(r.low)} · Short below ${money(r.low)}, stop ${money(r.high)}</div>`);
+    lines.push(`<div class="pnote">If you trade it, the range edges are natural stop levels: ${money(r.low)} for a long, ${money(r.high)} for a short.</div>`);
   } else if (r.state === "forming") {
     lines.push(`<div class="lv">Range forming: ${money(r.low)} – ${money(r.high)} so far · now ${money(r.last)}</div>`);
   } else {
-    lines.push(`<div class="pnote">Opens 9:30 ET. Let the first 30 minutes set the range, then trade the side it breaks, with the stop on the other side.</div>`);
+    lines.push(`<div class="pnote">Opens 9:30 ET. The 9:30–10:00 range appears here after 10:00, as reference levels.</div>`);
   }
   const dist = p.stop_dist || p.atr_dollars;
   if (dist > 0) {
     const sh = Math.floor(RISK / dist);
     lines.push(`<div class="lv">Size: $${RISK.toLocaleString()} risk ÷ ${money(dist)} stop${r.state === "set" ? " (range width)" : " (1× normal day)"} = <b>${sh.toLocaleString()} shares</b> (~${money(sh * (c.price || 0))})</div>`);
   }
+  lines.push(orbResult());
   (p.skip || []).forEach(s => lines.push(`<div class="skip">⚠ ${esc(s)}</div>`));
   (p.notes || []).forEach(s => lines.push(`<div class="pnote">• ${esc(s)}</div>`));
   const o = p.options;
   if (o) lines.push(`<div class="pnote">Options: ±${o.implied_pct.toFixed(1)}% priced by ${o.expiry} vs ~${o.expected_pct.toFixed(1)}% typical → <b>${o.verdict}</b>${full ? ` (${esc(o.label)})` : ""}</div>`);
   else if (full) lines.push(`<div class="pnote">Options: no options market for this stock.</div>`);
   return `<div class="plan v-${p.verdict}"><div class="plan-head"><span class="sec-t" style="margin:0">Trade plan</span><span class="verdict">${VERDICT[p.verdict](p)}</span></div>
-    ${lines.join("")}<div class="untested">Rules not yet tested on past data. Paper trade them first.${p.as_of ? ` · as of ${p.as_of} ET` : ""}</div></div>`;
+    ${lines.join("")}<div class="untested">Skip flags, sizing and the options check are risk tools, not tested signals.${p.as_of ? ` · as of ${p.as_of} ET` : ""}</div></div>`;
 }
 
 function card(c, rank, lock) {

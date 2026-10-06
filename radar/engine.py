@@ -18,7 +18,7 @@ from . import pump
 from . import publish
 from . import plan as tplan
 from . import store
-from .config import (BIG_MOVE_PCT, HIST_CACHE, HISTORY_PERIOD, HOLDOUT_DAYS, MARKET_TICKERS, MISS_THRESHOLD,
+from .config import (BIG_MOVE_PCT, DATA_DIR, HIST_CACHE, HISTORY_PERIOD, HOLDOUT_DAYS, MARKET_TICKERS, MISS_THRESHOLD,
                      MISS_WEIGHT, MODEL_PATH, MOVER_MIN_MARKET_CAP, MOVER_MIN_PRICE, MOVERS_PER_LIST, NEWS_TOP_N,
                      SECTOR_ETF, UNIVERSE)
 from .model import LogReg, auc, select_and_fit
@@ -570,7 +570,7 @@ def refresh():
                       "big_move_pct": BIG_MOVE_PCT, "model": {k: model[k] for k in
                       ("id", "trained_through", "run_at", "n_train", "big_stats", "dir_stats", "misses_upweighted")},
                       "graded_this_run": n_graded,
-                      "picks": picks, "picks_history": store.picks_history()})
+                      "picks": picks, "picks_history": store.picks_history(), "research": research_results()})
         _state["snapshot"] = snap
         store.cache_set("snapshot", snap)
         STATUS["last_refresh"] = snap["generated_at"]
@@ -644,6 +644,20 @@ def lock_daily_picks(cards, hist, t):
     session = store.latest_pick_session()
     items = store.picks_for(session) if session else []
     return {"session": session, "items": items, "locked_at": items[0]["locked_at"] if items else None}
+
+
+def research_results():
+    """Primary results of the saved research studies (shown on cards so the page cites real test results)."""
+    out = {}
+    f = DATA_DIR / "research" / "orb_study.json"
+    if f.exists():
+        try:
+            d = json.loads(f.read_text())
+            primary = next((r for r in d["results"] if r.get("primary")), None)
+            out["orb"] = dict(primary or {}, sessions=d.get("sessions"), run_at=d.get("run_at"))
+        except Exception:
+            pass
+    return out
 
 
 def attach_plans(picks, cards, t, hist):
