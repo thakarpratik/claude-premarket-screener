@@ -117,6 +117,6 @@ def test_sec_filings():
 
 
 def test_live_mode_without_keys_never_falls_back_to_demo():
-    hub = build_hub(EnvSettings(data_mode="live"))
+    hub = build_hub(EnvSettings(data_mode="live", price_provider="polygon"))
     assert not hub.ready and not hub.synthetic and hub.market is None
     assert any("POLYGON_API_KEY" in m for m in hub.setup_messages)

@@ -102,7 +102,7 @@ def test_risk_endpoint(client):
 
 
 def test_live_mode_without_keys_shows_setup_message(tmp_path):
-    env = EnvSettings(data_mode="live")
+    env = EnvSettings(data_mode="live", price_provider="polygon")
     with TestClient(create_app(env, None, "sqlite://", start_scheduler=False)) as c:
         c.post("/api/auth/register", json={"email": "z@example.com", "password": "correct-horse-1"}, headers=H)
         st = c.get("/api/status").json()

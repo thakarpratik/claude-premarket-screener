@@ -130,7 +130,7 @@ def analyze_intraday(bars1: pd.DataFrame, symbol: str, daily: pd.DataFrame, *, o
                     f"{float(last5['volume']) / v5_avg:.1f}x the session's average 5-min volume", "volume"))
     if spy1 is not None and not spy1.empty:
         sreg = spy1[(spy1.index.time >= time(9, 30)) & (spy1.index <= bars1.index[-1])]
-        if not sreg.empty:
+        if not sreg.empty and float(sreg["open"].iloc[0]) > 0 and opn > 0:
             s_ok = float(sreg["close"].iloc[-1]) > float(ind.vwap(sreg).iloc[-1])
             S.append(Signal("market_align", "S&P 500 above its VWAP", s_ok, "market tape supportive" if s_ok
                             else "market trading below VWAP", "relative_strength"))

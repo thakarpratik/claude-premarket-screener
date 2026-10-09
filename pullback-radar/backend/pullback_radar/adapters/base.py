@@ -113,6 +113,7 @@ class MarketDataProvider(ABC):
     name: str = "base"
     synthetic: bool = False
     delay_minutes: int = 0
+    supports_grouped: bool = False  # can list every symbol's bars for a session in one call
 
     @abstractmethod
     def daily_bars(self, symbol: str, start: date, end: date) -> pd.DataFrame:

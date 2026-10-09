@@ -43,6 +43,7 @@ class PolygonClient:
 
 class PolygonMarketData(MarketDataProvider):
     name = "polygon"
+    supports_grouped = True
 
     def __init__(self, client: PolygonClient, delay_minutes: int):
         self.c = client.http

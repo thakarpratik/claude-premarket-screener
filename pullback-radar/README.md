@@ -63,18 +63,25 @@ Or run the whole stack with PostgreSQL: `cp backend/.env.example backend/.env &&
 
 ## Live mode
 
-Set `DATA_MODE=live` and add keys to `backend/.env`:
+**Free, for personal use:** set `DATA_MODE=live` in `backend/.env` and restart the backend. With no
+Polygon key, prices, market cap, news and earnings dates come from **Yahoo Finance** via `yfinance`. No key
+is needed. Yahoo is unofficial: it can be delayed, rate-limited or change without notice, and its terms
+don't allow redistribution. Cards show the source and the timestamp of the last bar received. The universe
+is `UNIVERSE_SYMBOLS`, or a built-in list of about 120 liquid names. 1-minute bars cover only the last
+~30 days, so intraday backtests are limited to that window.
+
+**Licensed data (for anything beyond personal use):** add keys to `backend/.env`:
 
 | Variable | Provider | Used for | Needed? |
 |---|---|---|---|
-| `POLYGON_API_KEY` | [Polygon.io](https://polygon.io) | daily/intraday OHLCV, quotes, grouped daily (universe), reference data, market cap, splits, news with sentiment | **required** |
+| `POLYGON_API_KEY` | [Polygon.io](https://polygon.io) | daily/intraday OHLCV, quotes, grouped daily (universe), reference data, market cap, splits, news with sentiment | optional (otherwise Yahoo) |
 | `POLYGON_DELAY_MINUTES` | — | your plan's latency, so prices are labelled correctly | set to match the plan |
 | `FINNHUB_API_KEY` | [Finnhub](https://finnhub.io) | earnings calendar, extra company news, social sentiment (premium), economic calendar (premium) | recommended |
 | `SEC_USER_AGENT` | [SEC EDGAR](https://www.sec.gov/os/accessing-edgar-data) | dilution filings (S-1/S-3/424B), late filings | recommended (free) |
 | `ANTHROPIC_API_KEY` | [Anthropic](https://platform.claude.com) | optional AI interpretation of headlines, shown as "AI interpretation" | optional |
 
-If the Polygon key is missing, the API returns `setup_required` and the UI shows **"Scanner offline —
-setup required"**. It never falls back to synthetic data. A missing optional source is reported in the
+With `PRICE_PROVIDER=polygon` and no key, the API returns `setup_required` and the UI shows **"Scanner
+offline — setup required"**. Live mode never falls back to synthetic data. A missing optional source is reported in the
 card (for example "Earnings calendar unavailable — verify the next report date"), and that card gets a
 score penalty.
 
@@ -85,7 +92,7 @@ symbols, intraday data and real-time quotes need a paid stocks plan. `MAX_CANDID
 ## Testing
 
 ```bash
-cd pullback-radar/backend && pytest -q          # 81 tests
+cd pullback-radar/backend && pytest -q          # 88 tests
 cd pullback-radar/web && npm run typecheck && npm run build
 ```
 

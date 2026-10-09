@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .adapters.base import (EventsProvider, FilingsProvider, MarketDataProvider, NewsProvider, NotConfigured,
+from .adapters.base import (DataUnavailable, EventsProvider, FilingsProvider, MarketDataProvider, NewsProvider,
+                            NotConfigured,
                             ReferenceProvider, SentimentProvider)
 from .adapters.http import PROVIDER_ERRORS, PROVIDER_STATS
 from .config import ENV, EnvSettings
@@ -63,15 +64,28 @@ def build_hub(env: EnvSettings = ENV, demo_now=None) -> DataHub:
 
     hub = DataHub("live")
     cache = env.cache_dir
-    try:
-        from .adapters.polygon import PolygonClient, PolygonMarketData, PolygonNews, PolygonReference
-        pc = PolygonClient(env.polygon_api_key, env.polygon_base_url, env.polygon_requests_per_minute,
-                           cache_dir=cache / "polygon")
-        hub.market = PolygonMarketData(pc, env.polygon_delay_minutes)
-        hub.reference = PolygonReference(pc)
-        hub.news.append(PolygonNews(pc))
-    except NotConfigured as e:
-        hub.setup_messages.append(f"Scanner offline: {e}")
+    use_yahoo = env.price_provider == "yahoo" or (env.price_provider == "auto" and not env.polygon_api_key)
+    yahoo = None
+    if use_yahoo:
+        try:
+            from .adapters.yahoo import YahooData
+            yahoo = YahooData(env.yahoo_delay_minutes, env.yahoo_requests_per_minute, env.universe_symbols or None)
+            hub.market = hub.reference = yahoo
+            hub.news.append(yahoo)
+            hub.setup_messages.append("Prices and news from Yahoo Finance (free, unofficial, personal use only; "
+                                      "may be delayed or rate-limited).")
+        except DataUnavailable as e:
+            hub.setup_messages.append(f"Scanner offline: {e}")
+    else:
+        try:
+            from .adapters.polygon import PolygonClient, PolygonMarketData, PolygonNews, PolygonReference
+            pc = PolygonClient(env.polygon_api_key, env.polygon_base_url, env.polygon_requests_per_minute,
+                               cache_dir=cache / "polygon")
+            hub.market = PolygonMarketData(pc, env.polygon_delay_minutes)
+            hub.reference = PolygonReference(pc)
+            hub.news.append(PolygonNews(pc))
+        except NotConfigured as e:
+            hub.setup_messages.append(f"Scanner offline: {e}")
     try:
         from .adapters.finnhub import FinnhubClient, FinnhubEvents, FinnhubNews, FinnhubSentiment
         fc = FinnhubClient(env.finnhub_api_key, env.finnhub_requests_per_minute, cache_dir=cache / "finnhub")
@@ -79,7 +93,12 @@ def build_hub(env: EnvSettings = ENV, demo_now=None) -> DataHub:
         hub.news.append(FinnhubNews(fc))
         hub.sentiment = FinnhubSentiment(fc)
     except NotConfigured as e:
-        hub.setup_messages.append(f"Earnings calendar and social sentiment unavailable: {e}")
+        if yahoo is not None:
+            hub.events = yahoo
+            hub.setup_messages.append("Earnings dates from Yahoo Finance. Social sentiment unavailable "
+                                      "(optional: FINNHUB_API_KEY).")
+        else:
+            hub.setup_messages.append(f"Earnings calendar and social sentiment unavailable: {e}")
     try:
         from .adapters.sec import SecFilings
         hub.filings = SecFilings(env.sec_user_agent, cache_dir=cache / "sec")

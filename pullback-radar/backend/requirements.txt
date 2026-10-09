@@ -7,5 +7,7 @@ pandas==3.0.6
 numpy==2.5.3
 pydantic==2.14.0
 python-multipart==0.0.32
+# Free Yahoo Finance data for personal use (live mode without a Polygon key)
+yfinance==1.7.0
 # Optional: AI news interpretation (only used when ANTHROPIC_API_KEY is set)
 anthropic==1.12.1

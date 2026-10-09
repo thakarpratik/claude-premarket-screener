@@ -116,6 +116,8 @@ def select_universe(ctx: ScanContext, env: EnvSettings) -> tuple[list[TickerInfo
     ref = ctx.hub.reference
     if ctx.hub.synthetic:
         infos = ref.list_universe()
+    elif not ctx.hub.market.supports_grouped and not env.universe_symbols:
+        infos = ref.list_universe()  # providers without a full listing use their configured symbol list
     elif env.universe_symbols:
         infos = []
         for sym in env.universe_symbols:

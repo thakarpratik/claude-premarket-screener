@@ -44,6 +44,10 @@ class EnvSettings(BaseModel):
     """Read once at start-up. Secrets stay here and are never serialised to the client."""
     data_mode: Literal["demo", "live"] = "demo"
     database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'pullback_radar.db'}"
+    # Price source in live mode: "auto" = Polygon when POLYGON_API_KEY is set, otherwise Yahoo Finance.
+    price_provider: Literal["auto", "polygon", "yahoo"] = "auto"
+    yahoo_delay_minutes: int = 15
+    yahoo_requests_per_minute: int = 300
     polygon_api_key: str | None = None
     polygon_base_url: str = "https://api.polygon.io"
     # Polygon's stocks plans differ in latency. State yours honestly: 0 = real-time, 15 = 15-minute delayed.
@@ -69,6 +73,9 @@ class EnvSettings(BaseModel):
         syms = [s.strip().upper() for s in (_env("UNIVERSE_SYMBOLS", "") or "").split(",") if s.strip()]
         kw = dict(
             data_mode=(_env("DATA_MODE", "demo") or "demo").lower(),
+            price_provider=(_env("PRICE_PROVIDER", "auto") or "auto").lower(),
+            yahoo_delay_minutes=int(_env("YAHOO_DELAY_MINUTES", "15")),
+            yahoo_requests_per_minute=int(_env("YAHOO_REQUESTS_PER_MINUTE", "300")),
             polygon_api_key=_env("POLYGON_API_KEY"),
             polygon_base_url=_env("POLYGON_BASE_URL", "https://api.polygon.io"),
             polygon_delay_minutes=int(_env("POLYGON_DELAY_MINUTES", "15")),

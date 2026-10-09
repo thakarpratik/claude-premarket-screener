@@ -200,7 +200,7 @@ pullback.
 | Finnhub | Earnings calendar, news; social sentiment and economic calendar on premium | Varies | Commercial licences sold separately | 60/min free | Events, extra news, social |
 | SEC EDGAR | All filings | Minutes after filing | Public data | ~10 req/s with a User-Agent | Dilution / late-filing checks |
 | Alpaca / IEX (not wired) | IEX-only quotes on free tiers | Real-time IEX | Check terms | — | Possible alternative adapter |
-| Yahoo Finance (not used) | Broad | — | No licence for redistribution | Undocumented | Excluded on licensing grounds |
+| Yahoo Finance via yfinance | Broad daily history, ~30 days of 1-min bars, market cap, news, earnings dates | Varies; treated as 15-min delayed | Unofficial; no redistribution | Undocumented, can throttle | Default free source in live mode when no Polygon key is set (personal use) |
 
 No single free API covers real-time prices, news and sentiment together. Each data category is behind its
 own interface in `adapters/base.py`; add a provider by implementing that interface and wiring it in
