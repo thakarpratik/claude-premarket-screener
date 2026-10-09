@@ -1,0 +1,11 @@
+fastapi==0.143.0
+uvicorn==0.54.0
+SQLAlchemy==2.1.4
+psycopg[binary]==3.3.6
+httpx==0.28.1
+pandas==3.0.6
+numpy==2.5.3
+pydantic==2.14.0
+python-multipart==0.0.32
+# Optional: AI news interpretation (only used when ANTHROPIC_API_KEY is set)
+anthropic==1.12.1

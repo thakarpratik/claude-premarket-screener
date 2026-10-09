@@ -1,5 +1,8 @@
 # Move Radar — US stock big-move screener
 
+> This repository also contains **Market Pullback Radar**, a separate full-stack pullback scanner
+> (FastAPI + Next.js + PostgreSQL) in [`pullback-radar/`](pullback-radar/README.md).
+
 Shows US stocks as cards ranked by their **measured chance of a ≥3% move next session**. Each card also covers what happened today and why, the factors behind the odds, and a fact-based buy-side checklist. Every prediction is logged, graded after the next close, and fed back into a daily retrain.
 
 ## Run

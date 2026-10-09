@@ -1,0 +1,35 @@
+# Local full stack: PostgreSQL + FastAPI backend + Next.js frontend.
+#   cp backend/.env.example backend/.env   (edit keys; DATA_MODE=demo works without any)
+#   docker compose up --build   ->  http://localhost:3000
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: radar
+      POSTGRES_PASSWORD: radar
+      POSTGRES_DB: radar
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radar"]
+      interval: 5s
+      retries: 10
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://radar:radar@db:5432/radar
+      CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      db: {condition: service_healthy}
+    volumes: [backend-data:/app/data]
+  web:
+    build:
+      context: ./web
+      args: {BACKEND_URL: "http://backend:8000"}
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports: ["3000:3000"]
+    depends_on: [backend]
+volumes:
+  pgdata:
+  backend-data:

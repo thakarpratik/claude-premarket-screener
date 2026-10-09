@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body { background: #0b0e14; color: #d8dee9; }
+body { font-feature-settings: "tnum" 1; }
+.panel { @apply bg-panel border border-line rounded-lg; }
+.panel-h { @apply px-4 py-2.5 border-b border-line text-xs uppercase tracking-wider text-mute flex items-center justify-between gap-2; }
+.btn { @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-panel2 px-3 py-1.5 text-sm hover:border-mute disabled:opacity-50 disabled:cursor-not-allowed; }
+.btn-primary { @apply btn bg-info/15 border-info/40 text-info hover:border-info; }
+.input { @apply w-full rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm outline-none focus:border-info; }
+.label { @apply block text-xs text-mute mb-1; }
+.tbl { @apply w-full text-sm; }
+.tbl th { @apply text-left text-xs font-normal uppercase tracking-wide text-mute px-3 py-2 border-b border-line; }
+.tbl td { @apply px-3 py-2 border-b border-line/60 align-top; }
+.num { @apply font-mono tabular-nums; }
+a.link { @apply text-info hover:underline; }
